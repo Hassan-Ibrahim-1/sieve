@@ -19,8 +19,19 @@ pub fn lake_path() -> PathBuf {
 }
 
 pub fn extract(targets: &[String]) -> Result<ExtractionSnapshot> {
+    extract_internal(targets, false)
+}
+
+pub fn extract_with_proof_steps(targets: &[String]) -> Result<ExtractionSnapshot> {
+    extract_internal(targets, true)
+}
+
+fn extract_internal(targets: &[String], include_proof_steps: bool) -> Result<ExtractionSnapshot> {
     let mut command = Command::new(lake_path());
     command.args(["exe", "sieve_extract"]);
+    if include_proof_steps {
+        command.arg("__sieve_proof_steps__");
+    }
     command.args(targets);
     let output = command
         .output()

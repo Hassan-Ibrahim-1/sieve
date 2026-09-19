@@ -4,10 +4,12 @@ use serde::Serialize;
 use sieve::analysis::corpus::AnalysisCorpus;
 use sieve::analysis::dependency::DependencyConfig;
 use sieve::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
+use sieve::analysis::proof_steps::ProofStepGraph;
 use sieve::analysis::structure::StructuralConfig;
 use sieve::cli::{Cli, Command, usage};
-use sieve::extraction::extract;
+use sieve::extraction::{extract, extract_with_proof_steps};
 use sieve::report::{OutputFormat, csv, json, text};
+use sieve::server;
 
 fn emit<T: Serialize>(
     format: OutputFormat,
@@ -56,6 +58,24 @@ fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
             })?;
         }
         Command::Declaration(name) => show_declaration(cli, corpus, name)?,
+        Command::ProofSteps(name) => {
+            let declaration = corpus
+                .declaration(name)
+                .with_context(|| format!("extracted declaration {name} is missing"))?;
+            let extraction = declaration
+                .proof_steps
+                .as_ref()
+                .with_context(|| format!("proof-step extraction is absent for {name}"))?;
+            let graph = ProofStepGraph::new(extraction)?;
+            let report = graph.report(name, cli.selected_step)?;
+            match cli.format {
+                OutputFormat::Text => print!("{}", text::proof_steps(&report)),
+                OutputFormat::Json => println!("{}", json::render(&report)?),
+                OutputFormat::Csv => {
+                    bail!("proof-step reports do not have a flat CSV representation")
+                }
+            }
+        }
         Command::Dependencies(name) => {
             let config = dependency_config(cli);
             if cli.transitive {
@@ -168,6 +188,7 @@ fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
             };
             print!("{output}");
         }
+        Command::Serve => server::serve(corpus, cli.port)?,
         Command::LegacyDeclarations(names) => {
             let filter = AnalysisFilter::all();
             let summary = corpus.summary_with_histogram(&filter, &cli.histogram_buckets);
@@ -225,7 +246,12 @@ fn main() -> Result<()> {
         print!("{}", usage());
         return Ok(());
     }
-    let snapshot = extract(&cli.extraction_targets())?;
+    let targets = cli.extraction_targets();
+    let snapshot = if matches!(cli.command, Command::ProofSteps(_)) {
+        extract_with_proof_steps(&targets)?
+    } else {
+        extract(&targets)?
+    };
     let corpus = AnalysisCorpus::new(snapshot)?;
     run(&cli, &corpus)
 }
@@ -280,11 +306,64 @@ mod tests {
     }
 
     #[test]
+    fn extracts_the_reference_ftc_argument_as_scoped_steps() {
+        let target = "intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le".to_owned();
+        let corpus = AnalysisCorpus::new(
+            extract_with_proof_steps(std::slice::from_ref(&target))
+                .expect("reference FTC step extraction should succeed"),
+        )
+        .expect("valid proof-step snapshot");
+        let extraction = corpus
+            .declaration(&target)
+            .and_then(|declaration| declaration.proof_steps.as_ref())
+            .expect("reference theorem should include proof steps");
+        assert!(extraction.complete);
+        let expected_spine = [
+            "SeparatingDual.eq_iff_forall_dual_eq",
+            "ContinuousLinearMap.intervalIntegral_comp_comm",
+            "ContinuousLinearMap.map_sub",
+            "intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le_real",
+        ];
+        for expected in expected_spine {
+            assert!(
+                extraction
+                    .steps
+                    .iter()
+                    .any(|step| step.named_references.iter().any(|name| name == expected)),
+                "missing reference step {expected}"
+            );
+        }
+        let scalar_ftc = extraction
+            .steps
+            .iter()
+            .find(|step| {
+                step.named_references.iter().any(|name| {
+                    name == "intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le_real"
+                })
+            })
+            .expect("scalar FTC step");
+        assert!(
+            scalar_ftc
+                .context
+                .iter()
+                .any(|entry| entry.user_name == "g")
+        );
+        let graph = ProofStepGraph::new(extraction).expect("valid reference step graph");
+        assert!(
+            !graph
+                .paths_to_conclusion(scalar_ftc.id, 10)
+                .expect("conclusion exists")
+                .0
+                .is_empty()
+        );
+    }
+
+    #[test]
     #[ignore = "slow full-Mathlib integration test"]
     fn extracts_an_analysis_ready_ftc_module() {
         let corpus = AnalysisCorpus::new(extract(&[]).expect("FTC extraction should succeed"))
             .expect("valid snapshot");
-        assert_eq!(corpus.snapshot().schema_version, 3);
+        assert_eq!(corpus.snapshot().schema_version, 4);
         assert!(corpus.declarations().len() >= 70);
         assert!(corpus.symbols().len() > corpus.declarations().len());
         assert!(corpus.internal_dependency_edge_count() > 0);

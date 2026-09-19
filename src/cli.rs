@@ -8,6 +8,7 @@ use crate::report::OutputFormat;
 pub enum Command {
     Summary,
     Declaration(String),
+    ProofSteps(String),
     Dependencies(String),
     Dependents(String),
     Path(String, String),
@@ -18,6 +19,7 @@ pub enum Command {
     Modules,
     Graph,
     Export(String),
+    Serve,
     LegacyDeclarations(Vec<String>),
     Help,
 }
@@ -36,6 +38,8 @@ pub struct Cli {
     pub minimum_support: usize,
     pub structural_mode: StructuralMode,
     pub histogram_buckets: Vec<f64>,
+    pub port: u16,
+    pub selected_step: Option<usize>,
 }
 
 impl Cli {
@@ -56,6 +60,8 @@ impl Cli {
         let mut structural_mode = StructuralMode::AlphaEquivalent;
         let mut histogram_buckets =
             vec![10.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0];
+        let mut port = 4173;
+        let mut selected_step = None;
         let mut positional = Vec::new();
         let mut args = args.into_iter();
         while let Some(argument) = args.next() {
@@ -144,6 +150,21 @@ impl Cli {
                         other => bail!("invalid output format {other}"),
                     }
                 }
+                "--port" => {
+                    port = args
+                        .next()
+                        .context("--port requires a number")?
+                        .parse()
+                        .context("invalid port")?
+                }
+                "--step" => {
+                    selected_step = Some(
+                        args.next()
+                            .context("--step requires a numeric proof-step id")?
+                            .parse()
+                            .context("invalid proof-step id")?,
+                    )
+                }
                 "-h" | "--help" => positional.push("help".into()),
                 option if option.starts_with('-') => bail!("unknown option {option}"),
                 _ => positional.push(argument),
@@ -163,12 +184,15 @@ impl Cli {
             minimum_support,
             structural_mode,
             histogram_buckets,
+            port,
+            selected_step,
         })
     }
 
     pub fn extraction_targets(&self) -> Vec<String> {
         match &self.command {
             Command::LegacyDeclarations(targets) => targets.clone(),
+            Command::ProofSteps(target) => vec![target.clone()],
             _ => vec![],
         }
     }
@@ -193,6 +217,7 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
             Command::Summary
         }
         "declaration" => Command::Declaration(take_one(args, "sieve declaration <name>")?),
+        "proof-steps" => Command::ProofSteps(take_one(args, "sieve proof-steps <name>")?),
         "dependencies" => Command::Dependencies(take_one(args, "sieve dependencies <name>")?),
         "dependents" => Command::Dependents(take_one(args, "sieve dependents <name>")?),
         "path" => {
@@ -236,6 +261,12 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
             args,
             "sieve export <nodes|edges|modules|metrics>",
         )?),
+        "serve" => {
+            if !args.is_empty() {
+                bail!("serve takes no arguments");
+            }
+            Command::Serve
+        }
         "help" => Command::Help,
         _ => {
             args.insert(0, command);
@@ -245,7 +276,7 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
 }
 
 pub fn usage() -> &'static str {
-    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  summary\n  declaration <name>\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
+    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  serve [--port N]\n  summary\n  declaration <name>\n  proof-steps <name> [--step ID] [--format text|json]\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
 }
 
 pub fn selected_layer(selection: LayerSelection) -> DependencyLayer {
@@ -266,5 +297,24 @@ mod tests {
         .unwrap();
         assert!(cli.filter.include_generated);
         assert_eq!(cli.filter.layer, LayerSelection::Proof);
+    }
+
+    #[test]
+    fn parses_proof_step_selection() {
+        let cli = Cli::parse_from(
+            [
+                "proof-steps",
+                "Example.theorem",
+                "--step",
+                "7",
+                "--format",
+                "json",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(matches!(cli.command, Command::ProofSteps(ref name) if name == "Example.theorem"));
+        assert_eq!(cli.selected_step, Some(7));
+        assert_eq!(cli.format, OutputFormat::Json);
     }
 }

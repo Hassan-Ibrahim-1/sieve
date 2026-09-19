@@ -254,6 +254,7 @@ mod tests {
             statement_dependencies: vec![dependency.into()],
             proof_dependencies: vec![],
             axioms: vec![],
+            proof_steps: None,
         }
     }
 
@@ -274,7 +275,7 @@ mod tests {
 
     fn fixture() -> AnalysisCorpus {
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 3,
+            schema_version: 4,
             lean_version: "fixture".into(),
             imported_module: "Fixture".into(),
             declarations: vec![

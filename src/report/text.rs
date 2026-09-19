@@ -5,6 +5,7 @@ use crate::analysis::dependency::{
     CentralityResult, DependencyPath, DependencySummary, GraphStructureResult, TraversalResult,
 };
 use crate::analysis::metrics::{CorpusSummary, DeclarationMetrics, RankedDeclaration};
+use crate::analysis::proof_steps::ProofStepsReport;
 use crate::analysis::structure::{RepeatedSubexpression, StructuralMatch, layer_selection_name};
 use crate::model::DeclarationSnapshot;
 
@@ -98,6 +99,122 @@ pub fn declaration(
         writeln!(out, "  value tree:\n{tree}").unwrap();
     }
     out
+}
+
+pub fn proof_steps(report: &ProofStepsReport<'_>) -> String {
+    let mut out = String::new();
+    writeln!(out, "proof steps for {}", report.declaration).unwrap();
+    writeln!(
+        out,
+        "  extraction: complete={}, visited_terms={}, steps={}, conclusion={}",
+        report.complete,
+        report.visited_terms,
+        report.steps.len(),
+        report
+            .conclusion_step
+            .map(|id| format!("#{id}"))
+            .unwrap_or_else(|| "<none>".into())
+    )
+    .unwrap();
+    if let Some(reason) = report.truncation_reason {
+        writeln!(out, "  incomplete: {reason}").unwrap();
+    }
+    for step in report.steps {
+        let path = step
+            .proof_term_path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(".");
+        writeln!(out, "\n#{:<4} [{}] term-path={path}", step.id, step.kind).unwrap();
+        writeln!(out, "  establishes: {}", step.proposition).unwrap();
+        if !step.prerequisite_steps.is_empty() {
+            writeln!(
+                out,
+                "  direct prerequisite steps: {}",
+                step.prerequisite_steps
+                    .iter()
+                    .map(|id| format!("#{id}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .unwrap();
+        }
+        if !step.hypothesis_references.is_empty() {
+            writeln!(
+                out,
+                "  hypotheses used: {}",
+                step.hypothesis_references.join(", ")
+            )
+            .unwrap();
+        }
+        if !step.named_references.is_empty() {
+            writeln!(out, "  named results: {}", step.named_references.join(", ")).unwrap();
+        }
+        writeln!(out, "  context:").unwrap();
+        for entry in &step.context {
+            writeln!(
+                out,
+                "    {}  {} [{}]: {}",
+                entry.id, entry.user_name, entry.kind, entry.r#type
+            )
+            .unwrap();
+        }
+    }
+    if let Some(selected) = &report.selected {
+        writeln!(out, "\nselected step #{} evidence", selected.step).unwrap();
+        writeln!(
+            out,
+            "  direct prerequisites: {}",
+            format_step_ids(&selected.direct_prerequisites)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  transitive prerequisites: {}",
+            format_step_ids(&selected.transitive_prerequisites)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  direct dependents: {}",
+            format_step_ids(&selected.direct_dependents)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  paths to conclusion{}:",
+            if selected.paths_truncated {
+                " (truncated)"
+            } else {
+                ""
+            }
+        )
+        .unwrap();
+        for path in &selected.paths_to_conclusion {
+            writeln!(out, "    {}", format_step_ids(path)).unwrap();
+        }
+    }
+    writeln!(out, "\nnamed result statements:").unwrap();
+    for result in report.named_results {
+        writeln!(
+            out,
+            "  {} [{}]: {}",
+            result.name, result.kind, result.r#type
+        )
+        .unwrap();
+    }
+    out
+}
+
+fn format_step_ids(ids: &[usize]) -> String {
+    if ids.is_empty() {
+        return "<none>".into();
+    }
+    ids.iter()
+        .map(|id| format!("#{id}"))
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 fn write_expression(

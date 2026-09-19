@@ -49,6 +49,34 @@ Tactic invocations and before/after goal states are not part of this compiled
 snapshot. They require a separate source re-elaboration pipeline and should not
 be inferred from the final proof term.
 
+## Inspect proof steps
+
+Extract occurrence-scoped intermediate claims from one elaborated proof:
+
+```sh
+cargo run -- proof-steps \
+  intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le
+cargo run -- proof-steps \
+  intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le \
+  --step 28 --format json
+```
+
+Each candidate records its Lean-inferred proposition and structured expression,
+full local context, proof-term path, direct prerequisite steps, used hypotheses,
+and named results. Edges are oriented from prerequisite to the claim that uses
+it. Selecting a step adds its direct and transitive prerequisites, direct
+dependents, and paths to the final conclusion. Named-result statements are
+included even when the declarations live outside the extracted module.
+
+The extractor currently has conservative hard limits and reports
+`complete: false` with a reason rather than silently returning partial evidence. The
+[FTC evaluation reference](docs/ftc-proof-steps-reference.md) documents the
+mathematical structure expected in the raw graph.
+
+`Sieve/ProofStepFixtures.lean` supplies small proofs for reused facts,
+identical branch conclusions under different assumptions, and the same
+proposition proved by different arguments.
+
 ## Analyze
 
 ```sh
@@ -70,6 +98,20 @@ cargo run -- repeated-structures --layer proof --minimum-size 20 --minimum-suppo
 cargo run -- modules
 cargo run -- graph --internal-only
 ```
+
+## Local API
+
+Start the analysis server with:
+
+```sh
+cargo run -- serve
+```
+
+After Sieve extracts and indexes the FTC corpus, open
+`http://127.0.0.1:4173`. The built-in landing page links to the in-process Rust
+analysis API. Declaration details, dependency links, structural comparisons,
+and repeated fragments come from extracted Lean data rather than fixture data.
+To use another port, run `cargo run -- serve --port 8080`.
 
 Inspect a bounded prefix of an elaborated proof tree:
 

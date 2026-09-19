@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, bail, ensure};
 
+use crate::analysis::proof_steps::validate_proof_steps;
 use crate::model::{DeclarationSnapshot, ExpressionGraph, ExtractionSnapshot};
 
 impl ExpressionGraph {
@@ -117,13 +118,22 @@ impl DeclarationSnapshot {
             "hasValue disagrees with the value graph for {}",
             self.name
         );
+        if let Some(proof_steps) = &self.proof_steps {
+            ensure!(
+                self.has_value,
+                "proof steps recorded for valueless declaration {}",
+                self.name
+            );
+            validate_proof_steps(proof_steps)
+                .with_context(|| format!("invalid proof steps for {}", self.name))?;
+        }
         Ok(())
     }
 }
 
 pub fn validate_snapshot(snapshot: &ExtractionSnapshot) -> Result<()> {
     ensure!(
-        snapshot.schema_version == 3,
+        snapshot.schema_version == 4,
         "unsupported extraction schema"
     );
     let mut declarations = BTreeSet::new();

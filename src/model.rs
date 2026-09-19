@@ -65,6 +65,54 @@ pub struct ExpressionGraph {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofContextEntry {
+    pub id: String,
+    pub user_name: String,
+    pub kind: String,
+    pub binder_info: String,
+    pub r#type: String,
+    pub type_graph: ExpressionGraph,
+    pub value: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofStep {
+    pub id: usize,
+    pub kind: String,
+    pub proposition: String,
+    pub proposition_graph: ExpressionGraph,
+    pub context: Vec<ProofContextEntry>,
+    pub scope: Vec<String>,
+    pub proof_term_path: Vec<usize>,
+    pub prerequisite_steps: Vec<usize>,
+    pub hypothesis_references: Vec<String>,
+    pub named_references: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedResultSnapshot {
+    pub name: String,
+    pub kind: String,
+    pub module_name: Option<String>,
+    pub r#type: String,
+    pub type_graph: ExpressionGraph,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofStepExtraction {
+    pub complete: bool,
+    pub truncation_reason: Option<String>,
+    pub visited_terms: usize,
+    pub conclusion_step: Option<usize>,
+    pub steps: Vec<ProofStep>,
+    pub named_results: Vec<NamedResultSnapshot>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SourcePosition {
     pub line: usize,
     pub column: usize,
@@ -98,6 +146,7 @@ pub struct DeclarationSnapshot {
     pub statement_dependencies: Vec<String>,
     pub proof_dependencies: Vec<String>,
     pub axioms: Vec<String>,
+    pub proof_steps: Option<ProofStepExtraction>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

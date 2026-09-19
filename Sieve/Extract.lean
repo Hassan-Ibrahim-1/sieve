@@ -113,6 +113,46 @@ structure ExpressionGraph where
   nodes : Array ExpressionNode
   deriving ToJson, Repr
 
+structure ProofContextEntry where
+  id : String
+  userName : String
+  kind : String
+  binderInfo : String
+  type : String
+  typeGraph : ExpressionGraph
+  value : Option String := none
+  deriving ToJson, Repr
+
+structure ProofStep where
+  id : Nat
+  kind : String
+  proposition : String
+  propositionGraph : ExpressionGraph
+  context : Array ProofContextEntry
+  scope : Array String
+  proofTermPath : Array Nat
+  prerequisiteSteps : Array Nat := #[]
+  hypothesisReferences : Array String := #[]
+  namedReferences : Array String := #[]
+  deriving ToJson, Repr
+
+structure NamedResultSnapshot where
+  name : String
+  kind : String
+  moduleName : Option String
+  type : String
+  typeGraph : ExpressionGraph
+  deriving ToJson, Repr
+
+structure ProofStepExtraction where
+  complete : Bool := true
+  truncationReason : Option String := none
+  visitedTerms : Nat := 0
+  conclusionStep : Option Nat := none
+  steps : Array ProofStep := #[]
+  namedResults : Array NamedResultSnapshot := #[]
+  deriving ToJson, Repr
+
 structure ExpressionGraphBuilder where
   nodes : Array ExpressionNode := #[]
   interned : Std.HashMap Expr Nat := {}
@@ -229,6 +269,7 @@ structure DeclarationSnapshot where
   statementDependencies : Array String
   proofDependencies : Array String
   axioms : Array String
+  proofSteps : Option ProofStepExtraction := none
   deriving ToJson, Repr
 
 structure SymbolSnapshot where
@@ -245,7 +286,7 @@ structure SymbolSnapshot where
   deriving ToJson, Repr
 
 structure ExtractionSnapshot where
-  schemaVersion : Nat := 3
+  schemaVersion : Nat := 4
   leanVersion : String
   importedModule : String
   declarations : Array DeclarationSnapshot
@@ -260,7 +301,205 @@ def moduleForDeclaration? (env : Environment) (name : Name) : Option String := d
   let moduleName ← env.allImportedModuleNames[moduleIdx.toNat]?
   return toString moduleName
 
-def snapshotDeclaration (name : Name) : MetaM DeclarationSnapshot := do
+def parseName (value : String) : Name :=
+  value.splitOn "." |>.foldl (fun name part => name ++ Name.mkSimple part) Name.anonymous
+
+structure ProofStepBuilder where
+  steps : Array ProofStep := #[]
+  visitedTerms : Nat := 0
+  complete : Bool := true
+  truncationReason : Option String := none
+
+def maxProofSteps : Nat := 5000
+def maxVisitedProofTerms : Nat := 100000
+
+def proofPathId (path : Array Nat) (depth : Nat) : String :=
+  let pathText := if path.isEmpty then "root" else String.intercalate "." (path.map toString).toList
+  s!"local@{pathText}:{depth}"
+
+def pushUniqueNat (values : Array Nat) (value : Nat) : Array Nat :=
+  if values.contains value then values else values.push value
+
+def pushUniqueString (values : Array String) (value : String) : Array String :=
+  if values.contains value then values else values.push value
+
+def usedFreeVariable (expr : Expr) (id : FVarId) : Bool :=
+  (expr.find? fun candidate => candidate.isFVar && candidate.fvarId! == id).isSome
+
+def isRecursorName (env : Environment) (name : Name) : Bool :=
+  match env.find? name with
+  | some (.recInfo _) => true
+  | _ => false
+
+def isBranchingApplicationName (env : Environment) (name : Name) : Bool :=
+  isRecursorName env name || name == `ite || name == `dite ||
+    name == `Decidable.byCases || name == `Classical.byCases
+
+def markProofExtractionIncomplete (builder : IO.Ref ProofStepBuilder) (reason : String) : IO Unit := do
+  builder.modify fun state =>
+    if state.complete then { state with complete := false, truncationReason := some reason } else state
+
+def countVisitedProofTerm (builder : IO.Ref ProofStepBuilder) : IO Bool := do
+  let state ← builder.get
+  if state.visitedTerms >= maxVisitedProofTerms then
+    markProofExtractionIncomplete builder s!"proof-term visit limit ({maxVisitedProofTerms}) reached"
+    return false
+  builder.modify fun current => { current with visitedTerms := current.visitedTerms + 1 }
+  return true
+
+def snapshotContextEntry (id : String) (userName : Name) (kind : String)
+    (binderInfo : BinderInfo) (type : Expr) (value? : Option Expr := none) : MetaM ProofContextEntry := do
+  return {
+    id
+    userName := toString userName
+    kind
+    binderInfo := binderInfoName binderInfo
+    type := ← prettyPrintExpr type
+    typeGraph := expressionGraph type
+    value := ← value?.mapM prettyPrintExpr
+  }
+
+def addProofCandidate (builder : IO.Ref ProofStepBuilder) (expr proposition : Expr) (kind : String)
+    (context : Array ProofContextEntry) (bindings : Array (FVarId × String × Option Nat))
+    (path : Array Nat) (childSteps : Array Nat) (namedReference? : Option Name) : MetaM (Option Nat) := do
+  let state ← builder.get
+  if state.steps.size >= maxProofSteps then
+    markProofExtractionIncomplete builder s!"candidate-step limit ({maxProofSteps}) reached"
+    return none
+  let mut prerequisites := childSteps
+  let mut hypothesisReferences := #[]
+  for (fvarId, localId, localStep?) in bindings do
+    if usedFreeVariable expr fvarId then
+      match localStep? with
+      | some stepId => prerequisites := pushUniqueNat prerequisites stepId
+      | none =>
+          if context.any fun entry => entry.id == localId && entry.kind == "assumption" then
+            hypothesisReferences := pushUniqueString hypothesisReferences localId
+  let namedReferences := match namedReference? with
+    | some name => #[toString name]
+    | none => #[]
+  let id := state.steps.size
+  let step : ProofStep := {
+    id
+    kind
+    proposition := ← prettyPrintExpr proposition
+    propositionGraph := expressionGraph proposition
+    context
+    scope := context.map (·.id)
+    proofTermPath := path
+    prerequisiteSteps := prerequisites.qsort (· < ·)
+    hypothesisReferences := hypothesisReferences.qsort (· < ·)
+    namedReferences
+  }
+  builder.modify fun current => { current with steps := current.steps.push step }
+  return some id
+
+partial def walkProofTerm (builder : IO.Ref ProofStepBuilder) (expr : Expr)
+    (context : Array ProofContextEntry) (bindings : Array (FVarId × String × Option Nat))
+    (path : Array Nat) (forcedKind? : Option String := none) : MetaM (Array Nat) := do
+  unless ← countVisitedProofTerm builder do return #[]
+  match expr with
+  | .lam binderName domain body binderInfo =>
+      Meta.withLocalDecl binderName binderInfo domain fun fvar => do
+        let localId := proofPathId path context.size
+        let kind := if ← Meta.isProp domain then "assumption" else "variable"
+        let entry ← snapshotContextEntry localId binderName kind binderInfo domain
+        walkProofTerm builder (body.instantiate1 fvar) (context.push entry)
+          (bindings.push (fvar.fvarId!, localId, none)) (path.push 0) forcedKind?
+  | .letE binderName type value body nondep =>
+      let localSteps ← walkProofTerm builder value context bindings (path.push 0) (some "localFact")
+      let localStep? := localSteps.back?
+      Meta.withLetDecl binderName type value (nondep := nondep) fun fvar => do
+        let localId := proofPathId path context.size
+        let kind := if ← Meta.isProp type then "localFact" else "definition"
+        let entry ← snapshotContextEntry localId binderName kind BinderInfo.default type (some value)
+        walkProofTerm builder (body.instantiate1 fvar) (context.push entry)
+          (bindings.push (fvar.fvarId!, localId, localStep?)) (path.push 1) forcedKind?
+  | .mdata _ body =>
+      walkProofTerm builder body context bindings (path.push 0) forcedKind?
+  | .proj _ _ body =>
+      let childSteps ← walkProofTerm builder body context bindings (path.push 0)
+      match forcedKind? with
+      | none => return childSteps
+      | some kind =>
+          let proposition ← instantiateMVars (← Meta.inferType expr)
+          if ← Meta.isProp proposition then
+            return (← addProofCandidate builder expr proposition kind context bindings path
+              childSteps none).map (#[·]) |>.getD #[]
+          else return childSteps
+  | .app .. =>
+      let head := expr.getAppFn
+      let args := expr.getAppArgs
+      let headName? := match head with | .const name _ => some name | _ => none
+      let env ← getEnv
+      let isBranching := headName?.any (isBranchingApplicationName env)
+      let mut childSteps := #[]
+      for h : index in [:args.size] do
+        let arg := args[index]
+        let branchKind := if isBranching && arg.isLambda then some "branchConclusion" else none
+        for childId in ← walkProofTerm builder arg context bindings (path.push index) branchKind do
+          childSteps := pushUniqueNat childSteps childId
+      let proposition ← instantiateMVars (← Meta.inferType expr)
+      if ← Meta.isProp proposition then
+        match forcedKind?, headName? with
+        | some kind, _ =>
+            return (← addProofCandidate builder expr proposition kind context bindings path childSteps headName?).map (#[·]) |>.getD #[]
+        | none, some name =>
+            return (← addProofCandidate builder expr proposition "namedApplication" context bindings path childSteps (some name)).map (#[·]) |>.getD #[]
+        | none, none =>
+            return (← addProofCandidate builder expr proposition "anonymousApplication" context bindings path childSteps none).map (#[·]) |>.getD #[]
+      else
+        return childSteps
+  | .const name _ =>
+      match forcedKind? with
+      | none => return #[]
+      | some kind =>
+          let proposition ← instantiateMVars (← Meta.inferType expr)
+          if ← Meta.isProp proposition then
+            return (← addProofCandidate builder expr proposition kind context bindings path #[] (some name)).map (#[·]) |>.getD #[]
+          else return #[]
+  | .fvar .. | .bvar .. | .mvar .. | .sort .. | .forallE .. | .lit .. =>
+      match forcedKind? with
+      | none => return #[]
+      | some kind =>
+          let proposition ← instantiateMVars (← Meta.inferType expr)
+          if ← Meta.isProp proposition then
+            return (← addProofCandidate builder expr proposition kind context bindings path #[] none).map (#[·]) |>.getD #[]
+          else return #[]
+
+def snapshotNamedResult (name : Name) : MetaM NamedResultSnapshot := do
+  let env ← getEnv
+  let some info := env.find? name
+    | throwError "unknown proof-step reference '{name}'"
+  return {
+    name := toString name
+    kind := declarationKind info
+    moduleName := moduleForDeclaration? env name
+    type := ← prettyPrintExpr info.type
+    typeGraph := expressionGraph info.type
+  }
+
+def extractProofSteps (value : Expr) : MetaM ProofStepExtraction := do
+  let builder ← IO.mkRef ({} : ProofStepBuilder)
+  let conclusionSteps ← walkProofTerm builder value #[] #[] #[] (some "conclusion")
+  let conclusionStep := conclusionSteps.back?
+  let state ← builder.get
+  let mut referenced : NameSet := {}
+  for step in state.steps do
+    for name in step.namedReferences do
+      referenced := referenced.insert (parseName name)
+  let names := referenced.toArray.qsort fun left right => toString left < toString right
+  let namedResults ← names.mapM snapshotNamedResult
+  return {
+    complete := state.complete
+    truncationReason := state.truncationReason
+    visitedTerms := state.visitedTerms
+    conclusionStep
+    steps := state.steps
+    namedResults
+  }
+
+def snapshotDeclaration (name : Name) (includeProofSteps : Bool := false) : MetaM DeclarationSnapshot := do
   let env ← getEnv
   let some info := env.find? name
     | throwError "unknown declaration '{name}'"
@@ -268,6 +507,7 @@ def snapshotDeclaration (name : Name) : MetaM DeclarationSnapshot := do
   let axioms ← Lean.collectAxioms name
   let docString ← Lean.findDocString? env name
   let sourceRange := (← Lean.findDeclarationRanges? name).map (·.range)
+  let proofSteps ← if includeProofSteps then value?.mapM extractProofSteps else pure none
   return {
     name := toString name
     kind := declarationKind info
@@ -288,6 +528,7 @@ def snapshotDeclaration (name : Name) : MetaM DeclarationSnapshot := do
     statementDependencies := sortedNames info.type.getUsedConstantsAsSet
     proofDependencies := value?.map (sortedNames ·.getUsedConstantsAsSet) |>.getD #[]
     axioms := axioms.map toString |>.qsort (· < ·)
+    proofSteps
   }
 
 def snapshotSymbol (name : Name) : MetaM SymbolSnapshot := do
@@ -315,17 +556,14 @@ def declarationsInModule (env : Environment) (moduleName : Name) : Array Name :=
         if env.getModuleIdxFor? name == some moduleIdx then some name else none
       names.toArray.qsort fun left right => toString left < toString right
 
-def parseName (value : String) : Name :=
-  value.splitOn "." |>.foldl (fun name part => name ++ Name.mkSimple part) Name.anonymous
-
 def coreContext : Core.Context := {
   fileName := "<sieve-extractor>"
   fileMap := FileMap.ofString ""
 }
 
-def extract (env : Environment) (targets : Array Name) : IO ExtractionSnapshot := do
+def extract (env : Environment) (targets : Array Name) (includeProofSteps : Bool := false) : IO ExtractionSnapshot := do
   let action : MetaM (Array DeclarationSnapshot × Array SymbolSnapshot) := do
-    let declarations ← targets.mapM snapshotDeclaration
+    let declarations ← targets.mapM (snapshotDeclaration · includeProofSteps)
     let mut referencedNames : NameSet := {}
     for target in targets do
       referencedNames := referencedNames.insert target
@@ -348,8 +586,10 @@ unsafe def extractMain (args : List String) : IO Unit := do
   let moduleName := `Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
   enableInitializersExecution
   let env ← importModules (loadExts := true) #[{ module := moduleName }] {}
-  let targets := if args.isEmpty then declarationsInModule env moduleName else args.toArray.map parseName
-  let snapshot ← extract env targets
+  let includeProofSteps := args.contains "__sieve_proof_steps__"
+  let targetArgs := args.filter (· != "__sieve_proof_steps__")
+  let targets := if targetArgs.isEmpty then declarationsInModule env moduleName else targetArgs.toArray.map parseName
+  let snapshot ← extract env targets includeProofSteps
   IO.println (toJson snapshot).compress
 
 end Sieve
