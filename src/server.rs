@@ -145,15 +145,19 @@ fn handle_request(stream: &mut TcpStream, corpus: &AnalysisCorpus) -> Result<()>
 
 fn corpus_response(corpus: &AnalysisCorpus, query: &BTreeMap<String, String>) -> CorpusResponse {
     let filter = filter_from_query(query);
+    corpus_response_with_filter(corpus, &filter)
+}
+
+fn corpus_response_with_filter(corpus: &AnalysisCorpus, filter: &AnalysisFilter) -> CorpusResponse {
     let declarations = corpus
-        .filtered_declaration_ids(&filter)
+        .filtered_declaration_ids(filter)
         .map(|id| {
             let declaration = &corpus.declarations()[id];
             DeclarationListItem {
                 name: declaration.name.clone(),
                 kind: declaration.kind.clone(),
                 module: declaration.module_name.clone(),
-                generated: declaration.is_internal || declaration.is_private,
+                generated: declaration.is_generated(),
                 source_backed: declaration.source_range.is_some(),
                 has_value: declaration.has_value,
                 statement_occurrences: declaration.type_stats.nodes,
@@ -167,9 +171,16 @@ fn corpus_response(corpus: &AnalysisCorpus, query: &BTreeMap<String, String>) ->
         schema_version: corpus.snapshot().schema_version,
         lean_version: corpus.snapshot().lean_version.clone(),
         imported_modules: corpus.snapshot().imported_modules.clone(),
-        summary: corpus.summary(&filter),
+        summary: corpus.summary(filter),
         declarations,
     }
+}
+
+/// Render the same corpus payload exposed by `GET /api/corpus`.
+pub fn corpus_json(corpus: &AnalysisCorpus, filter: &AnalysisFilter) -> Result<String> {
+    Ok(serde_json::to_string(&corpus_response_with_filter(
+        corpus, filter,
+    ))?)
 }
 
 fn declaration_response(
@@ -194,7 +205,7 @@ fn declaration_response(
             name: &declaration.name,
             kind: &declaration.kind,
             module: declaration.module_name.as_deref(),
-            generated: declaration.is_internal || declaration.is_private,
+            generated: declaration.is_generated(),
             flags: DeclarationFlags {
                 internal: declaration.is_internal,
                 private: declaration.is_private,

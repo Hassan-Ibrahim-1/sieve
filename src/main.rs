@@ -11,6 +11,7 @@ use sieve::analysis::proof_steps::build_proof_outline;
 use sieve::analysis::structure::StructuralConfig;
 use sieve::cli::{Cli, Command, usage};
 use sieve::extraction::{ExtractionConfig, extract, extract_with_proof_steps};
+use sieve::model::ExtractionSnapshot;
 use sieve::report::{OutputFormat, csv, json, text};
 use sieve::server;
 
@@ -53,6 +54,15 @@ fn lens_config(cli: &Cli) -> LensAnalysisConfig {
         max_depth: cli.max_depth,
         limit: cli.limit,
         representative_path_limit: 3,
+    }
+}
+
+fn warn_if_empty_corpus(snapshot: &ExtractionSnapshot, targets: &[String]) {
+    if targets.is_empty() && snapshot.declarations.is_empty() {
+        eprintln!(
+            "warning: imported module(s) {} contribute no declarations defined directly in those modules; Sieve does not traverse imported dependencies",
+            snapshot.imported_modules.join(", ")
+        );
     }
 }
 
@@ -274,6 +284,7 @@ fn main() -> Result<()> {
     } else {
         extract(&extraction, &targets)?
     };
+    warn_if_empty_corpus(&snapshot, &targets);
     if cli.needs_targeted_proof_steps()
         && let Command::Inspect(name) = &cli.command
     {
@@ -457,7 +468,7 @@ mod tests {
             extract(&ftc_extraction(), &[]).expect("FTC extraction should succeed"),
         )
         .expect("valid snapshot");
-        assert_eq!(corpus.snapshot().schema_version, 5);
+        assert_eq!(corpus.snapshot().schema_version, 6);
         assert!(corpus.declarations().len() >= 70);
         assert!(corpus.symbols().len() > corpus.declarations().len());
         assert!(corpus.internal_dependency_edge_count() > 0);

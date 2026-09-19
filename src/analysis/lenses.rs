@@ -736,7 +736,7 @@ fn trust_evidence(declaration: &crate::model::DeclarationSnapshot) -> TrustEvide
         axioms: declaration.axioms.clone(),
         is_internal: declaration.is_internal,
         is_private: declaration.is_private,
-        is_generated: declaration.is_internal || declaration.is_private,
+        is_generated: declaration.is_generated(),
         is_unsafe: declaration.is_unsafe,
         is_partial: declaration.is_partial,
         has_value: declaration.has_value,
@@ -979,6 +979,7 @@ mod tests {
             name: name.into(),
             kind: "theorem".into(),
             module_name: Some("Fixture".into()),
+            generation_kind: None,
             is_internal: false,
             is_private: false,
             is_unsafe: false,
@@ -1007,6 +1008,7 @@ mod tests {
             name: name.into(),
             kind: "theorem".into(),
             module_name: Some("Fixture".into()),
+            generation_kind: None,
             is_internal: false,
             is_private: false,
             is_unsafe: false,
@@ -1033,7 +1035,7 @@ mod tests {
             .map(|declaration| symbol(&declaration.name))
             .collect();
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 5,
+            schema_version: 6,
             lean_version: "fixture".into(),
             imported_modules: vec!["Fixture".into()],
             declarations,
@@ -1060,7 +1062,7 @@ mod tests {
             .unwrap()
             .is_internal = true;
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 5,
+            schema_version: 6,
             lean_version: "fixture".into(),
             imported_modules: vec!["Fixture".into()],
             declarations,

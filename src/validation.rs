@@ -133,7 +133,7 @@ impl DeclarationSnapshot {
 
 pub fn validate_snapshot(snapshot: &ExtractionSnapshot) -> Result<()> {
     ensure!(
-        snapshot.schema_version == 5,
+        snapshot.schema_version == 6,
         "unsupported extraction schema"
     );
     ensure!(

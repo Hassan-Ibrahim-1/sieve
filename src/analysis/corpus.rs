@@ -211,7 +211,8 @@ mod tests {
             name: name.into(),
             kind: "theorem".into(),
             module_name: Some("Fixture".into()),
-            is_internal: generated,
+            generation_kind: generated.then(|| "equationTheorem".into()),
+            is_internal: false,
             is_private: false,
             is_unsafe: false,
             is_partial: false,
@@ -263,7 +264,8 @@ mod tests {
             name: name.into(),
             kind: "theorem".into(),
             module_name: Some("Fixture".into()),
-            is_internal: generated,
+            generation_kind: generated.then(|| "equationTheorem".into()),
+            is_internal: false,
             is_private: false,
             is_unsafe: false,
             is_partial: false,
@@ -275,7 +277,7 @@ mod tests {
 
     fn fixture() -> AnalysisCorpus {
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 5,
+            schema_version: 6,
             lean_version: "fixture".into(),
             imported_modules: vec!["Fixture".into()],
             declarations: vec![

@@ -65,7 +65,7 @@ impl AnalysisFilter {
     }
 
     pub fn matches_declaration(&self, declaration: &DeclarationSnapshot) -> bool {
-        (self.include_generated || (!declaration.is_internal && !declaration.is_private))
+        (self.include_generated || !declaration.is_hidden_by_default())
             && (!self.source_backed_only || declaration.source_range.is_some())
             && self
                 .declaration_kind
@@ -79,7 +79,7 @@ impl AnalysisFilter {
 
     pub fn matches_symbol(&self, symbol: &SymbolSnapshot, belongs_to_corpus: bool) -> bool {
         (!self.internal_only || belongs_to_corpus)
-            && (self.include_generated || (!symbol.is_internal && !symbol.is_private))
+            && (self.include_generated || !symbol.is_hidden_by_default())
             && (self.include_infrastructure || !symbol.is_infrastructure())
     }
 }

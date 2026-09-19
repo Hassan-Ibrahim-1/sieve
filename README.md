@@ -36,7 +36,7 @@ in memory; no analysis database is used.
 For every corpus declaration, Sieve retains:
 
 - declaration kind, module, source range, documentation, universe parameters,
-  and internal/private/unsafe/partial flags;
+  compiler-generation provenance, and internal/private/unsafe/partial flags;
 - the pretty-printed type and transitive axioms;
 - complete hash-consed expression DAGs for the type and value/proof;
 - expression kinds, child edges, constants, binders, de Bruijn indices,
@@ -46,9 +46,12 @@ For every corpus declaration, Sieve retains:
 
 The snapshot also contains a symbol table for every directly referenced Lean
 declaration. Symbol metadata includes its defining module, declaration kind,
-and whether it is a class, instance, or projection. This allows dependency
-statistics to distinguish mathematical declarations from common elaboration
-infrastructure.
+generation provenance, and whether it is a class, instance, or projection.
+This allows dependency statistics to distinguish mathematical declarations
+from common elaboration infrastructure. Generation provenance is derived from
+Lean metadata for equation theorems, matchers, recursors, no-confusion
+declarations, projections, and internal compiler names; it is not inferred from
+source-range availability or a declaration-name suffix.
 
 Rust validates the snapshot and builds a reusable `AnalysisCorpus` with
 declaration and symbol indexes, typed forward and reverse dependency edges,
@@ -91,6 +94,24 @@ mathematical structure expected in the raw graph.
 `Sieve/ProofStepFixtures.lean` supplies small proofs for reused facts,
 identical branch conclusions under different assumptions, and the same
 proposition proved by different arguments.
+
+## Small FTC fixture
+
+The dependency-free [`examples/ftc-slop`](examples/ftc-slop/README.md) project
+provides the fast end-to-end fixture. Its declaration-bearing module is
+`FtcSlop.Calculus`:
+
+```sh
+(cd examples/ftc-slop && lake build)
+cargo run -- --project examples/ftc-slop \
+  --import FtcSlop.Calculus summary
+cargo run -- --project examples/ftc-slop \
+  --import FtcSlop.Calculus proof-steps \
+  FtcSlop.fundamental_theorem_of_calculus
+```
+
+The default summary contains seven authored declarations; adding
+`--include-generated` includes two Lean-generated equation theorems.
 
 ## Analyze
 

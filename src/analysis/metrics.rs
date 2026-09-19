@@ -219,7 +219,7 @@ impl AnalysisCorpus {
             name: declaration.name.clone(),
             kind: declaration.kind.clone(),
             module: declaration.module_name.clone(),
-            generated: declaration.is_internal || declaration.is_private,
+            generated: declaration.is_generated(),
             source_backed: declaration.source_range.is_some(),
             has_documentation: declaration.doc_string.is_some(),
             axiom_count: declaration.axioms.len(),
@@ -310,10 +310,7 @@ impl AnalysisCorpus {
             filter: filter.clone(),
             declaration_count: declarations.len(),
             theorem_count: declarations.iter().filter(|d| d.kind == "theorem").count(),
-            generated_count: declarations
-                .iter()
-                .filter(|d| d.is_internal || d.is_private)
-                .count(),
+            generated_count: declarations.iter().filter(|d| d.is_generated()).count(),
             symbol_count: self
                 .symbols()
                 .iter()

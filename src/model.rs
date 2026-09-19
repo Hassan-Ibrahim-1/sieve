@@ -130,6 +130,7 @@ pub struct DeclarationSnapshot {
     pub name: String,
     pub kind: String,
     pub module_name: Option<String>,
+    pub generation_kind: Option<String>,
     pub is_internal: bool,
     pub is_private: bool,
     pub is_unsafe: bool,
@@ -149,12 +150,23 @@ pub struct DeclarationSnapshot {
     pub proof_steps: Option<ProofStepExtraction>,
 }
 
+impl DeclarationSnapshot {
+    pub fn is_generated(&self) -> bool {
+        self.generation_kind.is_some()
+    }
+
+    pub fn is_hidden_by_default(&self) -> bool {
+        self.is_generated() || self.is_internal || self.is_private
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SymbolSnapshot {
     pub name: String,
     pub kind: String,
     pub module_name: Option<String>,
+    pub generation_kind: Option<String>,
     pub is_internal: bool,
     pub is_private: bool,
     pub is_unsafe: bool,
@@ -165,6 +177,14 @@ pub struct SymbolSnapshot {
 }
 
 impl SymbolSnapshot {
+    pub fn is_generated(&self) -> bool {
+        self.generation_kind.is_some()
+    }
+
+    pub fn is_hidden_by_default(&self) -> bool {
+        self.is_generated() || self.is_internal || self.is_private
+    }
+
     pub fn is_infrastructure(&self) -> bool {
         self.is_class || self.is_instance || self.is_projection
     }

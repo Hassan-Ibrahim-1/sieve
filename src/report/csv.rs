@@ -20,7 +20,7 @@ pub fn nodes(corpus: &AnalysisCorpus, filter: &AnalysisFilter) -> String {
             cell(&declaration.name),
             cell(declaration.module_name.as_deref().unwrap_or("")),
             cell(&declaration.kind),
-            declaration.is_internal || declaration.is_private,
+            declaration.is_generated(),
             declaration.source_range.is_some(),
             declaration.type_stats.nodes,
             declaration

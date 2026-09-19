@@ -253,6 +253,7 @@ structure DeclarationSnapshot where
   name : String
   kind : String
   moduleName : Option String
+  generationKind : Option String
   isInternal : Bool
   isPrivate : Bool
   isUnsafe : Bool
@@ -276,6 +277,7 @@ structure SymbolSnapshot where
   name : String
   kind : String
   moduleName : Option String
+  generationKind : Option String
   isInternal : Bool
   isPrivate : Bool
   isUnsafe : Bool
@@ -286,7 +288,7 @@ structure SymbolSnapshot where
   deriving ToJson, Repr
 
 structure ExtractionSnapshot where
-  schemaVersion : Nat := 5
+  schemaVersion : Nat := 6
   leanVersion : String
   importedModules : Array String
   declarations : Array DeclarationSnapshot
@@ -300,6 +302,31 @@ def moduleForDeclaration? (env : Environment) (name : Name) : Option String := d
   let moduleIdx ← env.getModuleIdxFor? name
   let moduleName ← env.allImportedModuleNames[moduleIdx.toNat]?
   return toString moduleName
+
+/--
+Classify compiler-created declarations using Lean metadata. Private declarations
+are deliberately not classified as generated: privacy and provenance are
+independent properties, even though the default analysis filter hides both.
+-/
+def generationKind? (env : Environment) (name : Name) (info : ConstantInfo) : MetaM (Option String) := do
+  -- `eqnsExt` is non-persistent. Prime it from the possible parent so imported
+  -- equation theorems are recognized just like declarations in the current file.
+  discard <| Meta.getEqnsFor? name.getPrefix
+  if ← Meta.isEqnThm name then
+    return some "equationTheorem"
+  if ← Meta.isMatcher name then
+    return some "matcher"
+  if isNoConfusion env name then
+    return some "noConfusion"
+  if isAuxRecursor env name then
+    return some "auxiliaryRecursor"
+  if (match info with | .recInfo _ => true | _ => false) then
+    return some "recursor"
+  if env.isProjectionFn name then
+    return some "projection"
+  if name.isInternal then
+    return some "internalName"
+  return none
 
 def parseName (value : String) : Name :=
   value.splitOn "." |>.foldl (fun name part => name ++ Name.mkSimple part) Name.anonymous
@@ -512,6 +539,7 @@ def snapshotDeclaration (name : Name) (includeProofSteps : Bool := false) : Meta
     name := toString name
     kind := declarationKind info
     moduleName := moduleForDeclaration? env name
+    generationKind := ← generationKind? env name info
     isInternal := name.isInternal
     isPrivate := isPrivateName name
     isUnsafe := info.isUnsafe
@@ -539,6 +567,7 @@ def snapshotSymbol (name : Name) : MetaM SymbolSnapshot := do
     name := toString name
     kind := declarationKind info
     moduleName := moduleForDeclaration? env name
+    generationKind := ← generationKind? env name info
     isInternal := name.isInternal
     isPrivate := isPrivateName name
     isUnsafe := info.isUnsafe

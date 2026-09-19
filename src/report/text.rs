@@ -18,7 +18,7 @@ pub fn summary(summary: &CorpusSummary, schema: usize, lean: &str, module: &str)
     writeln!(out, "filters: generated={}, infrastructure={}, internal_only={}, source_backed_only={}, layer={}", summary.filter.include_generated, summary.filter.include_infrastructure, summary.filter.internal_only, summary.filter.source_backed_only, layer_selection_name(summary.filter.layer)).unwrap();
     writeln!(
         out,
-        "corpus: {} declarations, {} theorems, {} generated/private",
+        "corpus: {} declarations, {} theorems, {} generated",
         summary.declaration_count, summary.theorem_count, summary.generated_count
     )
     .unwrap();
@@ -76,8 +76,13 @@ pub fn declaration(
     }
     writeln!(
         out,
-        "  flags: internal={}, private={}, unsafe={}, partial={}",
-        snapshot.is_internal, snapshot.is_private, snapshot.is_unsafe, snapshot.is_partial
+        "  flags: generated={}, generation_kind={}, internal={}, private={}, unsafe={}, partial={}",
+        snapshot.is_generated(),
+        snapshot.generation_kind.as_deref().unwrap_or("none"),
+        snapshot.is_internal,
+        snapshot.is_private,
+        snapshot.is_unsafe,
+        snapshot.is_partial
     )
     .unwrap();
     writeln!(out, "  type: {}", snapshot.r#type).unwrap();
