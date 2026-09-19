@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use std::path::PathBuf;
 
 use crate::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
 use crate::analysis::lenses::LensKind;
@@ -45,6 +46,8 @@ pub struct Cli {
     pub selected_step: Option<usize>,
     pub lens: LensKind,
     pub layer_explicit: bool,
+    pub project: PathBuf,
+    pub imports: Vec<String>,
 }
 
 impl Cli {
@@ -69,6 +72,8 @@ impl Cli {
         let mut selected_step = None;
         let mut lens = LensKind::All;
         let mut layer_explicit = false;
+        let mut project = PathBuf::from(".");
+        let mut imports = Vec::new();
         let mut positional = Vec::new();
         let mut args = args.into_iter();
         while let Some(argument) = args.next() {
@@ -103,6 +108,16 @@ impl Cli {
                 "--module" => {
                     filter.module = Some(args.next().context("--module requires a module name")?)
                 }
+                "--project" => {
+                    project = args
+                        .next()
+                        .context("--project requires a Lean project directory")?
+                        .into()
+                }
+                "--import" => imports.push(
+                    args.next()
+                        .context("--import requires a Lean module name")?,
+                ),
                 "--weighted" => weighted = true,
                 "--transitive" => transitive = true,
                 "--max-depth" => {
@@ -192,6 +207,9 @@ impl Cli {
         {
             bail!("discover and inspect support --format text or json")
         }
+        if !matches!(command, Command::Help) && imports.is_empty() {
+            bail!("at least one --import module is required")
+        }
         Ok(Self {
             command,
             filter,
@@ -209,6 +227,8 @@ impl Cli {
             selected_step,
             lens,
             layer_explicit,
+            project,
+            imports,
         })
     }
 
@@ -319,7 +339,7 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
 }
 
 pub fn usage() -> &'static str {
-    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  discover [--lens influence|bridge|neighbors|all]\n  inspect <name> [--lens influence|bridge|neighbors|proof|trust|all]\n  serve [--port N]\n  summary\n  declaration <name>\n  proof-steps <name> [--step ID] [--format text|json]\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --lens influence|bridge|neighbors|proof|trust|all\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
+    "Sieve — analysis of elaborated Lean declarations\n\nUsage:\n  sieve --project PATH --import MODULE [--import MODULE ...] <command>\n\nCommands:\n  discover [--lens influence|bridge|neighbors|all]\n  inspect <name> [--lens influence|bridge|neighbors|proof|trust|all]\n  serve [--port N]\n  summary\n  declaration <name>\n  proof-steps <name> [--step ID] [--format text|json]\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nProject options:\n  --project PATH       Lake project directory (default: current directory)\n  --import MODULE      module to import and analyze; repeatable and required\n\nAnalysis options:\n  --lens influence|bridge|neighbors|proof|trust|all\n  --layer statement|proof|both\n  --module MODULE      restrict reports to declarations from MODULE\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
 }
 
 pub fn selected_layer(selection: LayerSelection) -> DependencyLayer {
@@ -335,7 +355,15 @@ mod tests {
     #[test]
     fn parses_filters_explicitly() {
         let cli = Cli::parse_from(
-            ["summary", "--include-generated", "--layer", "proof"].map(str::to_owned),
+            [
+                "summary",
+                "--import",
+                "Example",
+                "--include-generated",
+                "--layer",
+                "proof",
+            ]
+            .map(str::to_owned),
         )
         .unwrap();
         assert!(cli.filter.include_generated);
@@ -348,6 +376,8 @@ mod tests {
             [
                 "proof-steps",
                 "Example.theorem",
+                "--import",
+                "Example",
                 "--step",
                 "7",
                 "--format",
@@ -367,6 +397,8 @@ mod tests {
             [
                 "inspect",
                 "Example.theorem",
+                "--import",
+                "Example",
                 "--lens",
                 "bridge",
                 "--layer",
@@ -382,8 +414,43 @@ mod tests {
 
     #[test]
     fn rejects_unknown_or_discovery_only_lenses() {
-        assert!(Cli::parse_from(["discover", "--lens", "proof"].map(str::to_owned)).is_err());
-        assert!(Cli::parse_from(["inspect", "T", "--lens", "meaning"].map(str::to_owned)).is_err());
-        assert!(Cli::parse_from(["discover", "--format", "csv"].map(str::to_owned)).is_err());
+        assert!(
+            Cli::parse_from(
+                ["discover", "--import", "Example", "--lens", "proof"].map(str::to_owned)
+            )
+            .is_err()
+        );
+        assert!(
+            Cli::parse_from(
+                ["inspect", "T", "--import", "Example", "--lens", "meaning"].map(str::to_owned)
+            )
+            .is_err()
+        );
+        assert!(
+            Cli::parse_from(
+                ["discover", "--import", "Example", "--format", "csv"].map(str::to_owned)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parses_project_and_repeatable_imports() {
+        let cli = Cli::parse_from(
+            [
+                "--project",
+                "/tmp/lean-project",
+                "--import",
+                "Example.Basic",
+                "--import",
+                "Example.Advanced",
+                "summary",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert_eq!(cli.project, PathBuf::from("/tmp/lean-project"));
+        assert_eq!(cli.imports, ["Example.Basic", "Example.Advanced"]);
+        assert!(Cli::parse_from(["summary"].map(str::to_owned)).is_err());
     }
 }

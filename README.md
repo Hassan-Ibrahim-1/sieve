@@ -1,21 +1,35 @@
 # Sieve
 
-Sieve extracts structural information from elaborated Lean declarations so that
-formal proofs can be inspected with statistics and visualizations.
+Sieve extracts structural information from elaborated declarations in any
+Lake-based Lean project so that formal proofs can be inspected with statistics
+and visualizations. It runs the extractor with the target project's toolchain
+and dependency search path; the project does not need to depend on Sieve or
+Mathlib.
 
-The initial test corpus is Mathlib's Fundamental Theorem of Calculus module,
-pinned to commit `dec5b2b780537b6eaf7f5e5f000c12f7387fb24d`.
-It currently contains 104 declarations, including 90 theorems and generated or
-private declarations. Three useful focus theorems are:
+Build the Lean project first, then name one or more compiled modules to analyze:
 
-- `intervalIntegral.integral_deriv_eq_sub`
-- `intervalIntegral.integral_deriv_eq_sub'`
-- `intervalIntegral.integral_deriv_eq_sub_uIoo`
+```sh
+lake build
+/path/to/sieve --project /path/to/lean-project \
+  --import MyProject.Basic --import MyProject.Advanced summary
+```
 
-The Lean extractor loads the compiled Mathlib module, obtains each declaration
-from the Lean environment, and emits JSON. The Rust process deserializes the
-snapshot, validates it, and keeps it in memory. The full snapshot is about 8.7
-MB as uncompressed JSON; no analysis database is used.
+`--project` defaults to the current directory. `--import` is repeatable and
+required. With no declaration names, Sieve includes declarations defined
+directly in every imported module. Imported dependencies remain available for
+symbol metadata and targeted inspection, but are not automatically added to the
+corpus. The existing `--module` option is an analysis filter and is distinct
+from `--import`.
+
+When developing Sieve itself, pass project options after Cargo's `--` separator:
+
+```sh
+cargo run -- --project ../my-lean-project --import MyProject.Basic summary
+```
+
+The Lean extractor obtains each declaration from the elaborated environment and
+emits JSON. The Rust process deserializes and validates the snapshot and keeps it
+in memory; no analysis database is used.
 
 ## Extracted data
 
@@ -54,9 +68,10 @@ be inferred from the final proof term.
 Extract occurrence-scoped intermediate claims from one elaborated proof:
 
 ```sh
-cargo run -- proof-steps \
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" proof-steps \
   intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le
-cargo run -- proof-steps \
+cargo run -- --import "$FTC" proof-steps \
   intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le \
   --step 28 --format json
 ```
@@ -79,22 +94,28 @@ proposition proved by different arguments.
 
 ## Analyze
 
+This repository retains Mathlib's Fundamental Theorem of Calculus module at
+commit `dec5b2b780537b6eaf7f5e5f000c12f7387fb24d` as an evaluation corpus, not
+as Sieve's runtime default. It contains 104 declarations, including 90 theorems
+and generated or private declarations.
+
 ```sh
 lake update
-cargo run -- summary
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" summary
 ```
 
 The experimental lens commands provide evidence-backed discovery and focused
 inspection without assigning a single mathematical-importance score:
 
 ```sh
-cargo run -- discover --lens influence --limit 20
-cargo run -- discover --lens bridge --format json
-cargo run -- inspect intervalIntegral.integral_deriv_eq_sub --lens neighbors
-cargo run -- inspect \
+cargo run -- --import "$FTC" discover --lens influence --limit 20
+cargo run -- --import "$FTC" discover --lens bridge --format json
+cargo run -- --import "$FTC" inspect intervalIntegral.integral_deriv_eq_sub --lens neighbors
+cargo run -- --import "$FTC" inspect \
   intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le \
   --lens proof --format json
-cargo run -- inspect intervalIntegral.integral_deriv_eq_sub --lens trust
+cargo run -- --import "$FTC" inspect intervalIntegral.integral_deriv_eq_sub --lens trust
 ```
 
 `discover` accepts `influence`, `bridge`, `neighbors`, or `all`; `inspect`
@@ -122,7 +143,7 @@ reports axioms, declaration flags, source/documentation availability, and
 proof-extraction completeness without a safety score.
 
 An intentionally repetitive generated-proof experiment is available without
-changing the default corpus:
+changing the FTC evaluation corpus:
 
 ```sh
 cargo run --example slop_duplicate_experiment
@@ -138,16 +159,17 @@ mathematical-importance score.
 Useful commands include:
 
 ```sh
-cargo run -- declaration intervalIntegral.integral_deriv_eq_sub
-cargo run -- dependencies intervalIntegral.integral_deriv_eq_sub --layer proof
-cargo run -- dependents intervalIntegral.integral_deriv_eq_sub --internal-only
-cargo run -- path intervalIntegral.integral_deriv_eq_sub_uIoo intervalIntegral.integral_deriv_eq_sub
-cargo run -- rank proof-occurrences --limit 20
-cargo run -- compare intervalIntegral.integral_deriv_eq_sub intervalIntegral.integral_deriv_eq_sub' --layer both
-cargo run -- duplicates --alpha
-cargo run -- repeated-structures --layer proof --minimum-size 20 --minimum-support 2
-cargo run -- modules
-cargo run -- graph --internal-only
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" declaration intervalIntegral.integral_deriv_eq_sub
+cargo run -- --import "$FTC" dependencies intervalIntegral.integral_deriv_eq_sub --layer proof
+cargo run -- --import "$FTC" dependents intervalIntegral.integral_deriv_eq_sub --internal-only
+cargo run -- --import "$FTC" path intervalIntegral.integral_deriv_eq_sub_uIoo intervalIntegral.integral_deriv_eq_sub
+cargo run -- --import "$FTC" rank proof-occurrences --limit 20
+cargo run -- --import "$FTC" compare intervalIntegral.integral_deriv_eq_sub intervalIntegral.integral_deriv_eq_sub' --layer both
+cargo run -- --import "$FTC" duplicates --alpha
+cargo run -- --import "$FTC" repeated-structures --layer proof --minimum-size 20 --minimum-support 2
+cargo run -- --import "$FTC" modules
+cargo run -- --import "$FTC" graph --internal-only
 ```
 
 ## Local API
@@ -155,19 +177,21 @@ cargo run -- graph --internal-only
 Start the analysis server with:
 
 ```sh
-cargo run -- serve
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" serve
 ```
 
-After Sieve extracts and indexes the FTC corpus, open
+After Sieve extracts and indexes the selected modules, open
 `http://127.0.0.1:4173`. The built-in landing page links to the in-process Rust
 analysis API. Declaration details, dependency links, structural comparisons,
 and repeated fragments come from extracted Lean data rather than fixture data.
-To use another port, run `cargo run -- serve --port 8080`.
+To use another port, add `--port 8080`.
 
 Inspect a bounded prefix of an elaborated proof tree:
 
 ```sh
-cargo run -- declaration intervalIntegral.integral_deriv_eq_sub --tree-depth 4
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" declaration intervalIntegral.integral_deriv_eq_sub --tree-depth 4
 ```
 
 Common filters are explicit and are included in every structured result:
@@ -183,12 +207,13 @@ Use `--format json` for nested results. Flat deterministic CSV tables for
 visualization are available through:
 
 ```sh
-cargo run -- export nodes > nodes.csv
-cargo run -- export edges --include-infrastructure > edges.csv
-cargo run -- export modules > modules.csv
-cargo run -- export metrics > metrics.csv
-cargo run -- export duplicates > duplicates.csv
-cargo run -- export repeated --minimum-size 20 > repeated.csv
+FTC=Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+cargo run -- --import "$FTC" export nodes > nodes.csv
+cargo run -- --import "$FTC" export edges --include-infrastructure > edges.csv
+cargo run -- --import "$FTC" export modules > modules.csv
+cargo run -- --import "$FTC" export metrics > metrics.csv
+cargo run -- --import "$FTC" export duplicates > duplicates.csv
+cargo run -- --import "$FTC" export repeated --minimum-size 20 > repeated.csv
 ```
 
 The `graph` command reports degrees, weighted degrees, PageRank, unweighted
@@ -206,13 +231,14 @@ signals; type-class instances, projections, equality machinery, and generated
 declarations can dominate raw counts. Structural similarity does not imply the
 same mathematical argument.
 
-The legacy form `cargo run -- <fully-qualified-name>` is retained for targeted
-extraction and inspection.
+The legacy command form with one or more fully-qualified declaration names is
+retained for targeted extraction and inspection, but it still requires project
+options.
 
 ## Test
 
 ```sh
-lake build sieve_extract
+lake build
 cargo test
 ```
 

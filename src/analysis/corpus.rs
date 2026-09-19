@@ -275,9 +275,9 @@ mod tests {
 
     fn fixture() -> AnalysisCorpus {
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 4,
+            schema_version: 5,
             lean_version: "fixture".into(),
-            imported_module: "Fixture".into(),
+            imported_modules: vec!["Fixture".into()],
             declarations: vec![
                 declaration("A", "B", false),
                 declaration("B", "A", false),

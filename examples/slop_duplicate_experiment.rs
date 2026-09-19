@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result, ensure};
 use sieve::analysis::filters::DependencyLayer;
 use sieve::analysis::lenses::{LensAnalysisConfig, LensKind};
-use sieve::{AnalysisCorpus, ExtractionSnapshot, extract};
+use sieve::{AnalysisCorpus, ExtractionConfig, ExtractionSnapshot, extract};
 
 const COPIES: [&str; 3] = [
     "Sieve.SlopCorpus.resultOne",
@@ -61,9 +61,14 @@ fn influence(corpus: &AnalysisCorpus, name: &str) -> Result<(usize, usize, Optio
 }
 
 fn main() -> Result<()> {
-    let full = extract(&[])?;
+    let ftc = ExtractionConfig::new(
+        ".",
+        vec!["Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus".into()],
+    )?;
+    let slop = ExtractionConfig::new(".", vec!["Sieve.SlopCorpus".into()])?;
+    let full = extract(&ftc, &[])?;
     let baseline = AnalysisCorpus::new(full.clone())?;
-    let additions = extract(&COPIES.map(str::to_owned))?;
+    let additions = extract(&slop, &COPIES.map(str::to_owned))?;
     let augmented = AnalysisCorpus::new(merge_snapshots(full, additions)?)?;
 
     println!("neutral-name duplicate experiment");

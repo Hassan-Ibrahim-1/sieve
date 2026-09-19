@@ -7,7 +7,6 @@ import Lean.Meta.Instances
 import Lean.ProjFns
 import Lean.Util.CollectAxioms
 import Lean.Util.FoldConsts
-import Sieve.SlopCorpus
 
 open Lean
 
@@ -287,9 +286,9 @@ structure SymbolSnapshot where
   deriving ToJson, Repr
 
 structure ExtractionSnapshot where
-  schemaVersion : Nat := 4
+  schemaVersion : Nat := 5
   leanVersion : String
-  importedModule : String
+  importedModules : Array String
   declarations : Array DeclarationSnapshot
   symbols : Array SymbolSnapshot
   deriving ToJson, Repr
@@ -562,7 +561,8 @@ def coreContext : Core.Context := {
   fileMap := FileMap.ofString ""
 }
 
-def extract (env : Environment) (targets : Array Name) (includeProofSteps : Bool := false) : IO ExtractionSnapshot := do
+def extract (env : Environment) (importedModules : Array Name) (targets : Array Name)
+    (includeProofSteps : Bool := false) : IO ExtractionSnapshot := do
   let action : MetaM (Array DeclarationSnapshot × Array SymbolSnapshot) := do
     let declarations ← targets.mapM (snapshotDeclaration · includeProofSteps)
     let mut referencedNames : NameSet := {}
@@ -577,21 +577,43 @@ def extract (env : Environment) (targets : Array Name) (includeProofSteps : Bool
   let ((declarations, symbols), _, _) ← action.toIO coreContext { env := env }
   return {
     leanVersion := Lean.versionString
-    importedModule := "Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus"
+    importedModules := importedModules.map toString
     declarations
     symbols
   }
 
+structure ExtractOptions where
+  modules : Array Name := #[]
+  targets : Array Name := #[]
+  includeProofSteps : Bool := false
+
+partial def parseExtractOptions (args : List String) (options : ExtractOptions := {}) : Except String ExtractOptions :=
+  match args with
+  | [] => pure options
+  | "--proof-steps" :: rest =>
+      parseExtractOptions rest { options with includeProofSteps := true }
+  | "--module" :: moduleName :: rest =>
+      parseExtractOptions rest { options with modules := options.modules.push (parseName moduleName) }
+  | "--" :: targets =>
+      pure { options with targets := targets.toArray.map parseName }
+  | option :: _ =>
+      throw s!"unknown or incomplete extractor option '{option}'"
+
 unsafe def extractMain (args : List String) : IO Unit := do
+  let options ← match parseExtractOptions args with
+    | .ok options => pure options
+    | .error message => throw (IO.userError message)
+  if options.modules.isEmpty then
+    throw (IO.userError "at least one --module is required")
   initSearchPath (← findSysroot)
-  let moduleName := `Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
-  let slopModuleName := `Sieve.SlopCorpus
   enableInitializersExecution
-  let env ← importModules (loadExts := true) #[{ module := moduleName }, { module := slopModuleName }] {}
-  let includeProofSteps := args.contains "__sieve_proof_steps__"
-  let targetArgs := args.filter (· != "__sieve_proof_steps__")
-  let targets := if targetArgs.isEmpty then declarationsInModule env moduleName else targetArgs.toArray.map parseName
-  let snapshot ← extract env targets includeProofSteps
+  let imports := options.modules.map fun moduleName => ({ module := moduleName } : Import)
+  let env ← importModules (loadExts := true) imports {}
+  let targets := if options.targets.isEmpty then
+    options.modules.foldl (fun names moduleName => names ++ declarationsInModule env moduleName) #[]
+  else
+    options.targets
+  let snapshot ← extract env options.modules targets options.includeProofSteps
   IO.println (toJson snapshot).compress
 
 end Sieve

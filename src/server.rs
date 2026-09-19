@@ -49,7 +49,7 @@ struct DeclarationListItem {
 struct CorpusResponse {
     schema_version: usize,
     lean_version: String,
-    imported_module: String,
+    imported_modules: Vec<String>,
     summary: crate::analysis::metrics::CorpusSummary,
     declarations: Vec<DeclarationListItem>,
 }
@@ -166,7 +166,7 @@ fn corpus_response(corpus: &AnalysisCorpus, query: &BTreeMap<String, String>) ->
     CorpusResponse {
         schema_version: corpus.snapshot().schema_version,
         lean_version: corpus.snapshot().lean_version.clone(),
-        imported_module: corpus.snapshot().imported_module.clone(),
+        imported_modules: corpus.snapshot().imported_modules.clone(),
         summary: corpus.summary(&filter),
         declarations,
     }

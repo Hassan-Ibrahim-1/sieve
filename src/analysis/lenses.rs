@@ -1033,9 +1033,9 @@ mod tests {
             .map(|declaration| symbol(&declaration.name))
             .collect();
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 4,
+            schema_version: 5,
             lean_version: "fixture".into(),
-            imported_module: "Fixture".into(),
+            imported_modules: vec!["Fixture".into()],
             declarations,
             symbols,
         })
@@ -1060,9 +1060,9 @@ mod tests {
             .unwrap()
             .is_internal = true;
         AnalysisCorpus::new(ExtractionSnapshot {
-            schema_version: 4,
+            schema_version: 5,
             lean_version: "fixture".into(),
-            imported_module: "Fixture".into(),
+            imported_modules: vec!["Fixture".into()],
             declarations,
             symbols,
         })

@@ -133,8 +133,12 @@ impl DeclarationSnapshot {
 
 pub fn validate_snapshot(snapshot: &ExtractionSnapshot) -> Result<()> {
     ensure!(
-        snapshot.schema_version == 4,
+        snapshot.schema_version == 5,
         "unsupported extraction schema"
+    );
+    ensure!(
+        !snapshot.imported_modules.is_empty(),
+        "snapshot has no imported modules"
     );
     let mut declarations = BTreeSet::new();
     let symbols = snapshot

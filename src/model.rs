@@ -175,7 +175,7 @@ impl SymbolSnapshot {
 pub struct ExtractionSnapshot {
     pub schema_version: usize,
     pub lean_version: String,
-    pub imported_module: String,
+    pub imported_modules: Vec<String>,
     pub declarations: Vec<DeclarationSnapshot>,
     pub symbols: Vec<SymbolSnapshot>,
 }

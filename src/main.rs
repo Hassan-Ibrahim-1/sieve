@@ -10,7 +10,7 @@ use sieve::analysis::proof_steps::ProofStepGraph;
 use sieve::analysis::proof_steps::build_proof_outline;
 use sieve::analysis::structure::StructuralConfig;
 use sieve::cli::{Cli, Command, usage};
-use sieve::extraction::{extract, extract_with_proof_steps};
+use sieve::extraction::{ExtractionConfig, extract, extract_with_proof_steps};
 use sieve::report::{OutputFormat, csv, json, text};
 use sieve::server;
 
@@ -74,7 +74,7 @@ fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
                     &result,
                     corpus.snapshot().schema_version,
                     &corpus.snapshot().lean_version,
-                    &corpus.snapshot().imported_module,
+                    &corpus.snapshot().imported_modules.join(", "),
                 )
             })?;
         }
@@ -219,7 +219,7 @@ fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
                     &summary,
                     corpus.snapshot().schema_version,
                     &corpus.snapshot().lean_version,
-                    &corpus.snapshot().imported_module
+                    &corpus.snapshot().imported_modules.join(", ")
                 )
             );
             for name in names {
@@ -267,11 +267,12 @@ fn main() -> Result<()> {
         print!("{}", usage());
         return Ok(());
     }
+    let extraction = ExtractionConfig::new(&cli.project, cli.imports.clone())?;
     let targets = cli.extraction_targets();
     let mut snapshot = if matches!(cli.command, Command::ProofSteps(_)) {
-        extract_with_proof_steps(&targets)?
+        extract_with_proof_steps(&extraction, &targets)?
     } else {
-        extract(&targets)?
+        extract(&extraction, &targets)?
     };
     if cli.needs_targeted_proof_steps()
         && let Command::Inspect(name) = &cli.command
@@ -282,7 +283,7 @@ fn main() -> Result<()> {
             .find(|declaration| declaration.name == *name)
             .with_context(|| format!("unknown theorem {name}"))?;
         if full_declaration.has_value {
-            let targeted = extract_with_proof_steps(std::slice::from_ref(name))?;
+            let targeted = extract_with_proof_steps(&extraction, std::slice::from_ref(name))?;
             let proof_steps = targeted
                 .declarations
                 .into_iter()
@@ -300,11 +301,20 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    fn ftc_extraction() -> ExtractionConfig {
+        ExtractionConfig::new(
+            ".",
+            vec!["Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus".into()],
+        )
+        .expect("valid FTC extraction configuration")
+    }
+
     #[test]
     fn extracts_and_navigates_a_requested_declaration() {
         let target = "intervalIntegral.integral_deriv_eq_sub'".to_owned();
         let corpus = AnalysisCorpus::new(
-            extract(std::slice::from_ref(&target)).expect("targeted FTC extraction should succeed"),
+            extract(&ftc_extraction(), std::slice::from_ref(&target))
+                .expect("targeted FTC extraction should succeed"),
         )
         .expect("valid snapshot");
         let declaration = corpus
@@ -333,7 +343,8 @@ mod tests {
     fn dependency_edges_preserve_occurrence_counts() {
         let target = "intervalIntegral.integral_deriv_eq_sub".to_owned();
         let corpus = AnalysisCorpus::new(
-            extract(std::slice::from_ref(&target)).expect("targeted FTC extraction should succeed"),
+            extract(&ftc_extraction(), std::slice::from_ref(&target))
+                .expect("targeted FTC extraction should succeed"),
         )
         .expect("valid snapshot");
         let occurrences = corpus
@@ -349,7 +360,7 @@ mod tests {
     fn extracts_the_reference_ftc_argument_as_scoped_steps() {
         let target = "intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le".to_owned();
         let corpus = AnalysisCorpus::new(
-            extract_with_proof_steps(std::slice::from_ref(&target))
+            extract_with_proof_steps(&ftc_extraction(), std::slice::from_ref(&target))
                 .expect("reference FTC step extraction should succeed"),
         )
         .expect("valid proof-step snapshot");
@@ -442,9 +453,11 @@ mod tests {
     #[test]
     #[ignore = "slow full-Mathlib integration test"]
     fn extracts_an_analysis_ready_ftc_module() {
-        let corpus = AnalysisCorpus::new(extract(&[]).expect("FTC extraction should succeed"))
-            .expect("valid snapshot");
-        assert_eq!(corpus.snapshot().schema_version, 4);
+        let corpus = AnalysisCorpus::new(
+            extract(&ftc_extraction(), &[]).expect("FTC extraction should succeed"),
+        )
+        .expect("valid snapshot");
+        assert_eq!(corpus.snapshot().schema_version, 5);
         assert!(corpus.declarations().len() >= 70);
         assert!(corpus.symbols().len() > corpus.declarations().len());
         assert!(corpus.internal_dependency_edge_count() > 0);
