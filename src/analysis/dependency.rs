@@ -759,7 +759,7 @@ fn articulation_and_bridges(
     (state.points, state.bridges)
 }
 
-fn label_propagation(
+pub(crate) fn label_propagation(
     adjacency: &[BTreeSet<usize>],
     active: &BTreeSet<usize>,
 ) -> BTreeMap<usize, usize> {
@@ -769,15 +769,16 @@ fn label_propagation(
         .collect::<BTreeMap<_, _>>();
     for _ in 0..50 {
         let mut changed = false;
+        let previous = labels.clone();
         for &node in active {
             let mut counts = BTreeMap::new();
             for neighbor in &adjacency[node] {
-                *counts.entry(labels[neighbor]).or_insert(0usize) += 1;
+                *counts.entry(previous[neighbor]).or_insert(0usize) += 1;
             }
             if let Some((&label, _)) = counts
                 .iter()
                 .max_by(|(la, ca), (lb, cb)| ca.cmp(cb).then_with(|| lb.cmp(la)))
-                && labels[&node] != label
+                && previous[&node] != label
             {
                 labels.insert(node, label);
                 changed = true;

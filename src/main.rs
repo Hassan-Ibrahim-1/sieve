@@ -4,7 +4,10 @@ use serde::Serialize;
 use sieve::analysis::corpus::AnalysisCorpus;
 use sieve::analysis::dependency::DependencyConfig;
 use sieve::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
+use sieve::analysis::lenses::LensAnalysisConfig;
 use sieve::analysis::proof_steps::ProofStepGraph;
+#[cfg(test)]
+use sieve::analysis::proof_steps::build_proof_outline;
 use sieve::analysis::structure::StructuralConfig;
 use sieve::cli::{Cli, Command, usage};
 use sieve::extraction::{extract, extract_with_proof_steps};
@@ -43,9 +46,27 @@ fn structural_config(cli: &Cli) -> StructuralConfig {
     }
 }
 
+fn lens_config(cli: &Cli) -> LensAnalysisConfig {
+    LensAnalysisConfig {
+        filter: cli.filter.clone(),
+        layer_explicit: cli.layer_explicit,
+        max_depth: cli.max_depth,
+        limit: cli.limit,
+        representative_path_limit: 3,
+    }
+}
+
 fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
     match &cli.command {
         Command::Help => print!("{}", usage()),
+        Command::Discover => {
+            let result = corpus.discover_lenses(&cli.selected_lenses(), &lens_config(cli));
+            emit(cli.format, &result, || text::discovery(&result))?;
+        }
+        Command::Inspect(name) => {
+            let result = corpus.inspect_lenses(name, &cli.selected_lenses(), &lens_config(cli))?;
+            emit(cli.format, &result, || text::theorem_lenses(&result))?;
+        }
         Command::Summary => {
             let result = corpus.summary_with_histogram(&cli.filter, &cli.histogram_buckets);
             emit(cli.format, &result, || {
@@ -247,11 +268,30 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let targets = cli.extraction_targets();
-    let snapshot = if matches!(cli.command, Command::ProofSteps(_)) {
+    let mut snapshot = if matches!(cli.command, Command::ProofSteps(_)) {
         extract_with_proof_steps(&targets)?
     } else {
         extract(&targets)?
     };
+    if cli.needs_targeted_proof_steps()
+        && let Command::Inspect(name) = &cli.command
+    {
+        let full_declaration = snapshot
+            .declarations
+            .iter_mut()
+            .find(|declaration| declaration.name == *name)
+            .with_context(|| format!("unknown theorem {name}"))?;
+        if full_declaration.has_value {
+            let targeted = extract_with_proof_steps(std::slice::from_ref(name))?;
+            let proof_steps = targeted
+                .declarations
+                .into_iter()
+                .find(|declaration| declaration.name == *name)
+                .and_then(|declaration| declaration.proof_steps)
+                .with_context(|| format!("proof-step extraction is absent for {name}"))?;
+            full_declaration.proof_steps = Some(proof_steps);
+        }
+    }
     let corpus = AnalysisCorpus::new(snapshot)?;
     run(&cli, &corpus)
 }
@@ -356,6 +396,47 @@ mod tests {
                 .0
                 .is_empty()
         );
+        let outline = build_proof_outline(extraction).expect("valid proof outline");
+        for expected in expected_spine {
+            assert!(
+                outline
+                    .retained_nodes
+                    .iter()
+                    .any(|step| step.named_references.iter().any(|name| name == expected)),
+                "outline omitted reference step {expected}"
+            );
+        }
+        let raw_edges = outline
+            .raw_edges
+            .iter()
+            .map(|edge| (edge.source, edge.target))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(outline.condensed_edges.iter().all(|edge| {
+            edge.raw_step_path
+                .windows(2)
+                .all(|pair| raw_edges.contains(&(pair[0], pair[1])))
+        }));
+        let conclusion = outline.conclusion_step.expect("outline conclusion");
+        for node in &outline.retained_nodes {
+            let mut seen = std::collections::BTreeSet::from([node.raw_step_id]);
+            let mut queue = std::collections::VecDeque::from([node.raw_step_id]);
+            while let Some(current) = queue.pop_front() {
+                for edge in outline
+                    .condensed_edges
+                    .iter()
+                    .filter(|edge| edge.source == current)
+                {
+                    if seen.insert(edge.target) {
+                        queue.push_back(edge.target);
+                    }
+                }
+            }
+            assert!(
+                seen.contains(&conclusion),
+                "retained step {} does not reach the conclusion",
+                node.raw_step_id
+            );
+        }
     }
 
     #[test]
@@ -384,5 +465,22 @@ mod tests {
                 .iter()
                 .any(|dependency| dependency == "intervalIntegral.integral_eq_sub_of_hasDerivAt")
         );
+        let neighbors = corpus
+            .inspect_lenses(
+                "intervalIntegral.integral_deriv_eq_sub",
+                &[sieve::analysis::lenses::LensKind::Neighbors],
+                &sieve::analysis::lenses::LensAnalysisConfig {
+                    limit: 20,
+                    ..Default::default()
+                },
+            )
+            .expect("FTC theorem should be inspectable");
+        let names = neighbors.neighbors[0]
+            .neighbors
+            .iter()
+            .map(|neighbor| neighbor.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(names.contains("intervalIntegral.integral_deriv_eq_sub'"));
+        assert!(names.contains("intervalIntegral.integral_deriv_eq_sub_uIoo"));
     }
 }

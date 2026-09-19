@@ -4,6 +4,9 @@ use crate::analysis::comparison::DeclarationComparison;
 use crate::analysis::dependency::{
     CentralityResult, DependencyPath, DependencySummary, GraphStructureResult, TraversalResult,
 };
+use crate::analysis::lenses::{
+    BridgeEvidence, DiscoveryReport, InfluenceEvidence, NeighborEvidence, TheoremLensReport,
+};
 use crate::analysis::metrics::{CorpusSummary, DeclarationMetrics, RankedDeclaration};
 use crate::analysis::proof_steps::ProofStepsReport;
 use crate::analysis::structure::{RepeatedSubexpression, StructuralMatch, layer_selection_name};
@@ -348,6 +351,257 @@ pub fn comparison(result: &DeclarationComparison) -> String {
     out
 }
 
+pub fn discovery(report: &DiscoveryReport) -> String {
+    let mut out = String::new();
+    if !report.influence.is_empty() {
+        writeln!(out, "influence lens").unwrap();
+        for evidence in &report.influence {
+            write_influence(&mut out, evidence);
+        }
+    }
+    if !report.bridges.is_empty() {
+        writeln!(out, "bridge lens").unwrap();
+        for evidence in &report.bridges {
+            write_bridge(&mut out, evidence);
+        }
+    }
+    if !report.neighbors.is_empty() {
+        writeln!(out, "statement-neighbor lens").unwrap();
+        for evidence in &report.neighbors {
+            write_neighbors(&mut out, evidence);
+        }
+    }
+    out
+}
+
+pub fn theorem_lenses(report: &TheoremLensReport) -> String {
+    let mut out = String::new();
+    writeln!(out, "{}", report.theorem).unwrap();
+    writeln!(out, "  statement: {}", report.statement).unwrap();
+    for evidence in &report.influence {
+        write_influence(&mut out, evidence);
+    }
+    for evidence in &report.bridges {
+        write_bridge(&mut out, evidence);
+    }
+    for evidence in &report.neighbors {
+        write_neighbors(&mut out, evidence);
+    }
+    if let Some(proof) = &report.proof_outline {
+        writeln!(out, "  proof outline").unwrap();
+        writeln!(
+            out,
+            "    extraction: complete={}, raw_steps={}, retained_steps={}, condensed_edges={}",
+            proof.complete,
+            proof.raw_steps.len(),
+            proof.retained_nodes.len(),
+            proof.condensed_edges.len()
+        )
+        .unwrap();
+        if let Some(reason) = &proof.truncation_reason {
+            writeln!(out, "    incomplete: {reason}").unwrap();
+        }
+        for node in &proof.retained_nodes {
+            writeln!(
+                out,
+                "    #{} [{}] {}",
+                node.raw_step_id, node.kind, node.proposition
+            )
+            .unwrap();
+            if !node.named_references.is_empty() {
+                writeln!(
+                    out,
+                    "      named results: {}",
+                    node.named_references.join(", ")
+                )
+                .unwrap();
+            }
+        }
+        for edge in &proof.condensed_edges {
+            writeln!(
+                out,
+                "    #{} -> #{} via {}",
+                edge.source,
+                edge.target,
+                format_raw_path(&edge.raw_step_path)
+            )
+            .unwrap();
+        }
+    }
+    if let Some(trust) = &report.trust {
+        writeln!(out, "  trust evidence").unwrap();
+        writeln!(
+            out,
+            "    axioms ({}): {}",
+            trust.axioms.len(),
+            if trust.axioms.is_empty() {
+                "<none>".into()
+            } else {
+                trust.axioms.join(", ")
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    flags: generated={}, internal={}, private={}, unsafe={}, partial={}",
+            trust.is_generated,
+            trust.is_internal,
+            trust.is_private,
+            trust.is_unsafe,
+            trust.is_partial
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    source={}, documentation={}",
+            availability(trust.source_available),
+            availability(trust.documentation_available)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    proof extraction: available={}, complete={}",
+            trust.proof_extraction.available,
+            trust
+                .proof_extraction
+                .complete
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "not extracted".into())
+        )
+        .unwrap();
+    }
+    out
+}
+
+fn write_influence(out: &mut String, evidence: &InfluenceEvidence) {
+    writeln!(out, "\n{}", evidence.name).unwrap();
+    writeln!(out, "  statement: {}", evidence.statement).unwrap();
+    writeln!(
+        out,
+        "  reason [{}]: {}",
+        format!("{:?}", evidence.layer).to_lowercase(),
+        evidence.reason
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  direct dependents ({}): {}",
+        evidence.direct_dependent_count,
+        display_names(&evidence.direct_dependents)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  reachable dependents ({}): {}",
+        evidence.reachable_dependent_count,
+        display_names(&evidence.reachable_dependents)
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  graph regions ({}): {}",
+        evidence.graph_region_coverage,
+        display_names(&evidence.graph_regions)
+    )
+    .unwrap();
+    for path in &evidence.representative_paths {
+        writeln!(out, "  witness: {}", path.nodes.join(" -> ")).unwrap();
+    }
+}
+
+fn write_bridge(out: &mut String, evidence: &BridgeEvidence) {
+    writeln!(out, "\n{}", evidence.name).unwrap();
+    writeln!(out, "  statement: {}", evidence.statement).unwrap();
+    writeln!(
+        out,
+        "  reason [{}]: {}",
+        format!("{:?}", evidence.layer).to_lowercase(),
+        evidence.reason
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  articulation={}, directed_region_pairs={}, betweenness={:.3}",
+        evidence.articulation_point,
+        evidence.distinct_directed_region_pair_count,
+        evidence.betweenness
+    )
+    .unwrap();
+    for path in &evidence.witness_paths {
+        writeln!(out, "  witness: {}", path.nodes.join(" -> ")).unwrap();
+    }
+}
+
+fn write_neighbors(out: &mut String, evidence: &NeighborEvidence) {
+    writeln!(out, "\n{}", evidence.name).unwrap();
+    writeln!(out, "  statement: {}", evidence.statement).unwrap();
+    writeln!(
+        out,
+        "  reason [{}]: {}",
+        format!("{:?}", evidence.layer).to_lowercase(),
+        evidence.reason
+    )
+    .unwrap();
+    for neighbor in &evidence.neighbors {
+        writeln!(out, "  neighbor: {}", neighbor.name).unwrap();
+        writeln!(out, "    statement: {}", neighbor.statement).unwrap();
+        writeln!(out, "    similarity: combined={:.3}, dependencies={:.3}, kinds={:.3}, size={:.3}, depth={:.3}", neighbor.similarity.combined_score, neighbor.similarity.dependency_jaccard, neighbor.similarity.kind_histogram_cosine, neighbor.similarity.size_ratio, neighbor.similarity.depth_ratio).unwrap();
+        writeln!(
+            out,
+            "    exact={}, alpha_equivalent={}",
+            neighbor.exact_equal, neighbor.alpha_equivalent
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    shared dependencies: {}",
+            display_names(&neighbor.shared_dependencies)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    focal-only dependencies: {}",
+            display_names(&neighbor.focal_only_dependencies)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    neighbor-only dependencies: {}",
+            display_names(&neighbor.neighbor_only_dependencies)
+        )
+        .unwrap();
+    }
+}
+
+fn display_names(names: &[String]) -> String {
+    if names.is_empty() {
+        "<none>".into()
+    } else {
+        const TEXT_NAME_LIMIT: usize = 12;
+        let mut rendered = names
+            .iter()
+            .take(TEXT_NAME_LIMIT)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if names.len() > TEXT_NAME_LIMIT {
+            write!(rendered, " (+{} more)", names.len() - TEXT_NAME_LIMIT).unwrap();
+        }
+        rendered
+    }
+}
+
+fn availability(value: bool) -> &'static str {
+    if value { "available" } else { "absent" }
+}
+
+fn format_raw_path(path: &[usize]) -> String {
+    path.iter()
+        .map(|id| format!("#{id}"))
+        .collect::<Vec<_>>()
+        .join(" -> ")
+}
+
 pub fn duplicates(results: &[StructuralMatch]) -> String {
     let mut out = String::new();
     for result in results {
@@ -418,4 +672,51 @@ pub fn graph_structure(result: &GraphStructureResult) -> String {
         result.articulation_points.len(),
         result.bridges.len()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::filters::{AnalysisFilter, DependencyLayer};
+    use crate::analysis::lenses::{DependencyWitnessPath, LensAnalysisConfig, LensKind};
+
+    #[test]
+    fn discovery_text_snapshot_is_statement_first_and_deterministic() {
+        let report = DiscoveryReport {
+            requested_lenses: vec![LensKind::Influence],
+            config: LensAnalysisConfig {
+                filter: AnalysisFilter::default(),
+                layer_explicit: false,
+                max_depth: 32,
+                limit: 1,
+                representative_path_limit: 3,
+            },
+            ranking_rules: vec![],
+            graph_region_algorithm: "fixture".into(),
+            graph_regions: vec![],
+            influence: vec![InfluenceEvidence {
+                name: "Foundation".into(),
+                statement: "P".into(),
+                reason: "reachable from 1 theorem(s), including 1 direct dependent(s), across 1 graph region(s)".into(),
+                layer: DependencyLayer::Proof,
+                direct_dependent_count: 1,
+                direct_dependents: vec!["Later".into()],
+                reachable_dependent_count: 1,
+                reachable_dependents: vec!["Later".into()],
+                graph_region_coverage: 1,
+                graph_regions: vec!["proof-region-0001".into()],
+                representative_paths: vec![DependencyWitnessPath {
+                    nodes: vec!["Later".into(), "Foundation".into()],
+                    layers: vec![DependencyLayer::Proof],
+                }],
+                traversal_truncated: false,
+            }],
+            bridges: vec![],
+            neighbors: vec![],
+        };
+        assert_eq!(
+            discovery(&report),
+            "influence lens\n\nFoundation\n  statement: P\n  reason [proof]: reachable from 1 theorem(s), including 1 direct dependent(s), across 1 graph region(s)\n  direct dependents (1): Later\n  reachable dependents (1): Later\n  graph regions (1): proof-region-0001\n  witness: Later -> Foundation\n"
+        );
+    }
 }

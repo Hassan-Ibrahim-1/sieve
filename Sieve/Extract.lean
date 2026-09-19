@@ -7,6 +7,7 @@ import Lean.Meta.Instances
 import Lean.ProjFns
 import Lean.Util.CollectAxioms
 import Lean.Util.FoldConsts
+import Sieve.SlopCorpus
 
 open Lean
 
@@ -584,8 +585,9 @@ def extract (env : Environment) (targets : Array Name) (includeProofSteps : Bool
 unsafe def extractMain (args : List String) : IO Unit := do
   initSearchPath (← findSysroot)
   let moduleName := `Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus
+  let slopModuleName := `Sieve.SlopCorpus
   enableInitializersExecution
-  let env ← importModules (loadExts := true) #[{ module := moduleName }] {}
+  let env ← importModules (loadExts := true) #[{ module := moduleName }, { module := slopModuleName }] {}
   let includeProofSteps := args.contains "__sieve_proof_steps__"
   let targetArgs := args.filter (· != "__sieve_proof_steps__")
   let targets := if targetArgs.isEmpty then declarationsInModule env moduleName else targetArgs.toArray.map parseName

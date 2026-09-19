@@ -1,11 +1,14 @@
 use anyhow::{Context, Result, bail};
 
 use crate::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
+use crate::analysis::lenses::LensKind;
 use crate::analysis::structure::StructuralMode;
 use crate::report::OutputFormat;
 
 #[derive(Clone, Debug)]
 pub enum Command {
+    Discover,
+    Inspect(String),
     Summary,
     Declaration(String),
     ProofSteps(String),
@@ -40,6 +43,8 @@ pub struct Cli {
     pub histogram_buckets: Vec<f64>,
     pub port: u16,
     pub selected_step: Option<usize>,
+    pub lens: LensKind,
+    pub layer_explicit: bool,
 }
 
 impl Cli {
@@ -62,11 +67,14 @@ impl Cli {
             vec![10.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0];
         let mut port = 4173;
         let mut selected_step = None;
+        let mut lens = LensKind::All;
+        let mut layer_explicit = false;
         let mut positional = Vec::new();
         let mut args = args.into_iter();
         while let Some(argument) = args.next() {
             match argument.as_str() {
                 "--layer" => {
+                    layer_explicit = true;
                     filter.layer = match args
                         .next()
                         .context("--layer requires statement, proof, or both")?
@@ -77,6 +85,12 @@ impl Cli {
                         "both" => LayerSelection::Both,
                         other => bail!("invalid layer {other}"),
                     }
+                }
+                "--lens" => {
+                    lens = args
+                        .next()
+                        .context("--lens requires a lens name")?
+                        .parse()?;
                 }
                 "--include-generated" => filter.include_generated = true,
                 "--include-infrastructure" => filter.include_infrastructure = true,
@@ -171,6 +185,13 @@ impl Cli {
             }
         }
         let command = parse_command(positional)?;
+        if let (Command::Discover, LensKind::Proof | LensKind::Trust) = (&command, lens) {
+            bail!("discover supports influence, bridge, neighbors, or all")
+        }
+        if matches!(command, Command::Discover | Command::Inspect(_)) && format == OutputFormat::Csv
+        {
+            bail!("discover and inspect support --format text or json")
+        }
         Ok(Self {
             command,
             filter,
@@ -186,6 +207,8 @@ impl Cli {
             histogram_buckets,
             port,
             selected_step,
+            lens,
+            layer_explicit,
         })
     }
 
@@ -195,6 +218,19 @@ impl Cli {
             Command::ProofSteps(target) => vec![target.clone()],
             _ => vec![],
         }
+    }
+
+    pub fn selected_lenses(&self) -> Vec<LensKind> {
+        self.lens
+            .expand_for_discovery(matches!(self.command, Command::Discover))
+    }
+
+    pub fn needs_targeted_proof_steps(&self) -> bool {
+        matches!(self.command, Command::Inspect(_))
+            && self
+                .selected_lenses()
+                .iter()
+                .any(|lens| matches!(lens, LensKind::Proof | LensKind::Trust))
     }
 }
 
@@ -210,6 +246,13 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
         Ok(args.into_iter().next().unwrap())
     };
     Ok(match command.as_str() {
+        "discover" => {
+            if !args.is_empty() {
+                bail!("discover takes no arguments");
+            }
+            Command::Discover
+        }
+        "inspect" => Command::Inspect(take_one(args, "sieve inspect <name>")?),
         "summary" => {
             if !args.is_empty() {
                 bail!("summary takes no arguments");
@@ -276,7 +319,7 @@ fn parse_command(mut args: Vec<String>) -> Result<Command> {
 }
 
 pub fn usage() -> &'static str {
-    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  serve [--port N]\n  summary\n  declaration <name>\n  proof-steps <name> [--step ID] [--format text|json]\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
+    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  discover [--lens influence|bridge|neighbors|all]\n  inspect <name> [--lens influence|bridge|neighbors|proof|trust|all]\n  serve [--port N]\n  summary\n  declaration <name>\n  proof-steps <name> [--step ID] [--format text|json]\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --lens influence|bridge|neighbors|proof|trust|all\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
 }
 
 pub fn selected_layer(selection: LayerSelection) -> DependencyLayer {
@@ -316,5 +359,31 @@ mod tests {
         assert!(matches!(cli.command, Command::ProofSteps(ref name) if name == "Example.theorem"));
         assert_eq!(cli.selected_step, Some(7));
         assert_eq!(cli.format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn parses_lens_commands_and_explicit_layers() {
+        let cli = Cli::parse_from(
+            [
+                "inspect",
+                "Example.theorem",
+                "--lens",
+                "bridge",
+                "--layer",
+                "both",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(matches!(cli.command, Command::Inspect(ref name) if name == "Example.theorem"));
+        assert_eq!(cli.lens, LensKind::Bridge);
+        assert!(cli.layer_explicit);
+    }
+
+    #[test]
+    fn rejects_unknown_or_discovery_only_lenses() {
+        assert!(Cli::parse_from(["discover", "--lens", "proof"].map(str::to_owned)).is_err());
+        assert!(Cli::parse_from(["inspect", "T", "--lens", "meaning"].map(str::to_owned)).is_err());
+        assert!(Cli::parse_from(["discover", "--format", "csv"].map(str::to_owned)).is_err());
     }
 }

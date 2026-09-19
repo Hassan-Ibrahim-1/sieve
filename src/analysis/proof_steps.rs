@@ -1,16 +1,51 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{ProofStep, ProofStepExtraction};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofStepEdge {
     /// Prerequisite step. Edges always point from prerequisite to the claim using it.
     pub source: usize,
     pub target: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofOutlineNode {
+    pub raw_step_id: usize,
+    pub kind: String,
+    pub proposition: String,
+    pub context: Vec<crate::model::ProofContextEntry>,
+    pub hypothesis_references: Vec<String>,
+    pub named_references: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofOutlineEdge {
+    pub source: usize,
+    pub target: usize,
+    /// Inclusive raw-step path from the retained source to the retained target.
+    pub raw_step_path: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofOutlineEvidence {
+    pub algorithm: String,
+    pub retention_rules: Vec<String>,
+    pub complete: bool,
+    pub truncation_reason: Option<String>,
+    pub visited_terms: usize,
+    pub conclusion_step: Option<usize>,
+    pub raw_steps: Vec<ProofStep>,
+    pub raw_edges: Vec<ProofStepEdge>,
+    pub retained_nodes: Vec<ProofOutlineNode>,
+    pub condensed_edges: Vec<ProofOutlineEdge>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -188,6 +223,122 @@ impl<'a> ProofStepGraph<'a> {
     }
 }
 
+/// Conservatively removes anonymous plumbing while retaining the conclusion,
+/// local facts, branch conclusions, and non-plumbing named applications that
+/// can reach the conclusion. Each replacement edge carries its complete raw
+/// step path, and the full uncontracted extraction remains in the report.
+pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutlineEvidence> {
+    let graph = ProofStepGraph::new(extraction)?;
+    let raw_edges = graph.edges();
+    let Some(conclusion) = extraction.conclusion_step else {
+        return Ok(ProofOutlineEvidence {
+            algorithm: "conservative proof-step path contraction".into(),
+            retention_rules: proof_outline_retention_rules(),
+            complete: extraction.complete,
+            truncation_reason: extraction.truncation_reason.clone(),
+            visited_terms: extraction.visited_terms,
+            conclusion_step: None,
+            raw_steps: extraction.steps.clone(),
+            raw_edges,
+            retained_nodes: vec![],
+            condensed_edges: vec![],
+        });
+    };
+
+    let ancestors = graph
+        .transitive_prerequisites(conclusion)
+        .unwrap_or_default()
+        .into_iter()
+        .chain(std::iter::once(conclusion))
+        .collect::<BTreeSet<_>>();
+    let retained = extraction
+        .steps
+        .iter()
+        .filter(|step| {
+            ancestors.contains(&step.id)
+                && (step.id == conclusion
+                    || matches!(step.kind.as_str(), "localFact" | "branchConclusion")
+                    || (step.kind == "namedApplication"
+                        && step
+                            .named_references
+                            .iter()
+                            .any(|name| meaningful_named_reference(name))))
+        })
+        .map(|step| step.id)
+        .collect::<BTreeSet<_>>();
+
+    let retained_nodes = retained
+        .iter()
+        .map(|&id| {
+            let step = &extraction.steps[id];
+            ProofOutlineNode {
+                raw_step_id: id,
+                kind: step.kind.clone(),
+                proposition: step.proposition.clone(),
+                context: step.context.clone(),
+                hypothesis_references: step.hypothesis_references.clone(),
+                named_references: step.named_references.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut condensed_edges = BTreeSet::new();
+    for &source in &retained {
+        let mut queue = VecDeque::new();
+        for &next in graph.direct_dependents(source).unwrap_or_default() {
+            if ancestors.contains(&next) {
+                queue.push_back(vec![source, next]);
+            }
+        }
+        while let Some(path) = queue.pop_front() {
+            let current = *path.last().expect("outline path is nonempty");
+            if retained.contains(&current) {
+                condensed_edges.insert(ProofOutlineEdge {
+                    source,
+                    target: current,
+                    raw_step_path: path,
+                });
+                continue;
+            }
+            for &next in graph.direct_dependents(current).unwrap_or_default() {
+                if ancestors.contains(&next) {
+                    let mut extended = path.clone();
+                    extended.push(next);
+                    queue.push_back(extended);
+                }
+            }
+        }
+    }
+
+    Ok(ProofOutlineEvidence {
+        algorithm: "conservative proof-step path contraction".into(),
+        retention_rules: proof_outline_retention_rules(),
+        complete: extraction.complete,
+        truncation_reason: extraction.truncation_reason.clone(),
+        visited_terms: extraction.visited_terms,
+        conclusion_step: Some(conclusion),
+        raw_steps: extraction.steps.clone(),
+        raw_edges,
+        retained_nodes,
+        condensed_edges: condensed_edges.into_iter().collect(),
+    })
+}
+
+fn proof_outline_retention_rules() -> Vec<String> {
+    vec![
+        "retain the conclusion and every local-fact or branch-conclusion ancestor".into(),
+        "retain named applications except generated instances, coercion adapters, and core equality/congruence plumbing".into(),
+        "replace omitted paths with condensed edges carrying inclusive raw-step paths".into(),
+    ]
+}
+
+fn meaningful_named_reference(name: &str) -> bool {
+    const CORE_PLUMBING: &[&str] = &[
+        "id", "congrArg", "Eq.mpr", "Eq.mp", "Eq.symm", "Iff.mpr", "Iff.mp",
+    ];
+    !name.starts_with("inst") && !name.contains(".to") && !CORE_PLUMBING.contains(&name)
+}
+
 fn is_prefix(left: &[String], right: &[String]) -> bool {
     left.len() <= right.len() && left.iter().zip(right).all(|(left, right)| left == right)
 }
@@ -349,6 +500,21 @@ mod tests {
         }
     }
 
+    fn named_step(id: usize, kind: &str, prerequisites: Vec<usize>, named: &[&str]) -> ProofStep {
+        ProofStep {
+            id,
+            kind: kind.into(),
+            proposition: format!("P{id}"),
+            proposition_graph: graph(),
+            context: vec![],
+            scope: vec![],
+            proof_term_path: vec![id],
+            prerequisite_steps: prerequisites,
+            hypothesis_references: vec![],
+            named_references: named.iter().map(|name| (*name).into()).collect(),
+        }
+    }
+
     #[test]
     fn edges_point_from_prerequisites_to_claims() {
         let extraction = ProofStepExtraction {
@@ -366,6 +532,98 @@ mod tests {
             graph.paths_to_conclusion(0, 10).unwrap().0,
             vec![vec![0, 1, 2], vec![0, 2]]
         );
+    }
+
+    #[test]
+    fn condensed_edges_expand_to_valid_raw_edges() {
+        let extraction = ProofStepExtraction {
+            complete: true,
+            truncation_reason: None,
+            visited_terms: 5,
+            conclusion_step: Some(4),
+            steps: vec![
+                named_step(0, "namedApplication", vec![], &["Foundation"]),
+                named_step(1, "anonymousApplication", vec![0], &[]),
+                named_step(2, "localFact", vec![1], &[]),
+                named_step(3, "branchConclusion", vec![2], &[]),
+                named_step(4, "conclusion", vec![3], &["Finish"]),
+            ],
+            named_results: vec![
+                crate::model::NamedResultSnapshot {
+                    name: "Foundation".into(),
+                    kind: "theorem".into(),
+                    module_name: Some("Fixture".into()),
+                    r#type: "P".into(),
+                    type_graph: graph(),
+                },
+                crate::model::NamedResultSnapshot {
+                    name: "Finish".into(),
+                    kind: "theorem".into(),
+                    module_name: Some("Fixture".into()),
+                    r#type: "P".into(),
+                    type_graph: graph(),
+                },
+            ],
+        };
+        let outline = build_proof_outline(&extraction).unwrap();
+        assert_eq!(
+            outline
+                .retained_nodes
+                .iter()
+                .map(|node| node.raw_step_id)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 3, 4]
+        );
+        let raw = outline
+            .raw_edges
+            .iter()
+            .map(|edge| (edge.source, edge.target))
+            .collect::<BTreeSet<_>>();
+        for edge in &outline.condensed_edges {
+            assert_eq!(edge.raw_step_path.first(), Some(&edge.source));
+            assert_eq!(edge.raw_step_path.last(), Some(&edge.target));
+            assert!(
+                edge.raw_step_path
+                    .windows(2)
+                    .all(|pair| raw.contains(&(pair[0], pair[1])))
+            );
+        }
+        let conclusion = outline.conclusion_step.unwrap();
+        for node in &outline.retained_nodes {
+            let mut seen = BTreeSet::from([node.raw_step_id]);
+            let mut queue = VecDeque::from([node.raw_step_id]);
+            while let Some(current) = queue.pop_front() {
+                for edge in outline
+                    .condensed_edges
+                    .iter()
+                    .filter(|edge| edge.source == current)
+                {
+                    if seen.insert(edge.target) {
+                        queue.push_back(edge.target);
+                    }
+                }
+            }
+            assert!(seen.contains(&conclusion));
+        }
+    }
+
+    #[test]
+    fn incomplete_outline_preserves_extraction_status() {
+        let extraction = ProofStepExtraction {
+            complete: false,
+            truncation_reason: Some("fixture limit reached".into()),
+            visited_terms: 10,
+            conclusion_step: None,
+            steps: vec![],
+            named_results: vec![],
+        };
+        let outline = build_proof_outline(&extraction).unwrap();
+        assert!(!outline.complete);
+        assert_eq!(
+            outline.truncation_reason.as_deref(),
+            Some("fixture limit reached")
+        );
+        assert!(outline.retained_nodes.is_empty());
     }
 
     #[test]

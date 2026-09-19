@@ -84,6 +84,43 @@ lake update
 cargo run -- summary
 ```
 
+The experimental lens commands provide evidence-backed discovery and focused
+inspection without assigning a single mathematical-importance score:
+
+```sh
+cargo run -- discover --lens influence --limit 20
+cargo run -- discover --lens bridge --format json
+cargo run -- inspect intervalIntegral.integral_deriv_eq_sub --lens neighbors
+cargo run -- inspect \
+  intervalIntegral.integral_eq_sub_of_hasDeriv_right_of_le \
+  --lens proof --format json
+cargo run -- inspect intervalIntegral.integral_deriv_eq_sub --lens trust
+```
+
+`discover` accepts `influence`, `bridge`, `neighbors`, or `all`; `inspect`
+also accepts `proof` and `trust`. Influence and bridge use proof dependencies
+by default, while statement neighbors use statement expressions. An explicit
+`--layer both` produces separate statement and proof evidence rather than a
+blended score. JSON reports include typed configuration, complete evidence,
+canonical graph-region identifiers, and witness paths. Generated/private and
+infrastructure declarations stay out of reported candidates by default, but
+may occur as intermediate nodes in dependency paths.
+
+Influence ranks by reachable dependents, direct dependents, and name. Bridge
+ranks by articulation status, distinct directed graph-region pairs,
+betweenness, and name. Neighbor reports use the existing combined structural
+similarity and always expose dependency overlap, expression-kind, size, and
+depth components. These are statement neighbors, not claims of equivalence,
+generalization, or membership in a mathematical family.
+
+Proof inspection runs normal full-corpus extraction plus targeted proof-step
+extraction for the requested theorem. Its conservative outline retains the
+conclusion, local facts, branch conclusions, and non-plumbing named
+applications. The JSON report also retains the complete raw step graph, and
+every condensed edge records the inclusive raw-step path it replaced. Trust
+reports axioms, declaration flags, source/documentation availability, and
+proof-extraction completeness without a safety score.
+
 Useful commands include:
 
 ```sh
