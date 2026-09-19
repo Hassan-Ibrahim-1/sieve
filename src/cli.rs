@@ -1,0 +1,270 @@
+use anyhow::{Context, Result, bail};
+
+use crate::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
+use crate::analysis::structure::StructuralMode;
+use crate::report::OutputFormat;
+
+#[derive(Clone, Debug)]
+pub enum Command {
+    Summary,
+    Declaration(String),
+    Dependencies(String),
+    Dependents(String),
+    Path(String, String),
+    Rank(String),
+    Compare(String, String),
+    Duplicates,
+    RepeatedStructures,
+    Modules,
+    Graph,
+    Export(String),
+    LegacyDeclarations(Vec<String>),
+    Help,
+}
+
+#[derive(Clone, Debug)]
+pub struct Cli {
+    pub command: Command,
+    pub filter: AnalysisFilter,
+    pub format: OutputFormat,
+    pub weighted: bool,
+    pub transitive: bool,
+    pub max_depth: usize,
+    pub limit: usize,
+    pub tree_depth: Option<usize>,
+    pub minimum_size: usize,
+    pub minimum_support: usize,
+    pub structural_mode: StructuralMode,
+    pub histogram_buckets: Vec<f64>,
+}
+
+impl Cli {
+    pub fn parse() -> Result<Self> {
+        Self::parse_from(std::env::args().skip(1))
+    }
+
+    pub fn parse_from(args: impl IntoIterator<Item = String>) -> Result<Self> {
+        let mut filter = AnalysisFilter::default();
+        let mut format = OutputFormat::Text;
+        let mut weighted = false;
+        let mut transitive = false;
+        let mut max_depth = 32;
+        let mut limit = 100;
+        let mut tree_depth = None;
+        let mut minimum_size = 4;
+        let mut minimum_support = 2;
+        let mut structural_mode = StructuralMode::AlphaEquivalent;
+        let mut histogram_buckets =
+            vec![10.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0];
+        let mut positional = Vec::new();
+        let mut args = args.into_iter();
+        while let Some(argument) = args.next() {
+            match argument.as_str() {
+                "--layer" => {
+                    filter.layer = match args
+                        .next()
+                        .context("--layer requires statement, proof, or both")?
+                        .as_str()
+                    {
+                        "statement" => LayerSelection::Statement,
+                        "proof" | "value" => LayerSelection::Proof,
+                        "both" => LayerSelection::Both,
+                        other => bail!("invalid layer {other}"),
+                    }
+                }
+                "--include-generated" => filter.include_generated = true,
+                "--include-infrastructure" => filter.include_infrastructure = true,
+                "--internal-only" => filter.internal_only = true,
+                "--source-backed-only" => filter.source_backed_only = true,
+                "--kind" => {
+                    filter.declaration_kind =
+                        Some(args.next().context("--kind requires a declaration kind")?)
+                }
+                "--module" => {
+                    filter.module = Some(args.next().context("--module requires a module name")?)
+                }
+                "--weighted" => weighted = true,
+                "--transitive" => transitive = true,
+                "--max-depth" => {
+                    max_depth = args
+                        .next()
+                        .context("--max-depth requires a number")?
+                        .parse()
+                        .context("invalid maximum depth")?
+                }
+                "--limit" => {
+                    limit = args
+                        .next()
+                        .context("--limit requires a number")?
+                        .parse()
+                        .context("invalid result limit")?
+                }
+                "--tree-depth" => {
+                    tree_depth = Some(
+                        args.next()
+                            .context("--tree-depth requires a number")?
+                            .parse()
+                            .context("invalid tree depth")?,
+                    )
+                }
+                "--minimum-size" => {
+                    minimum_size = args
+                        .next()
+                        .context("--minimum-size requires a number")?
+                        .parse()
+                        .context("invalid minimum size")?
+                }
+                "--minimum-support" => {
+                    minimum_support = args
+                        .next()
+                        .context("--minimum-support requires a number")?
+                        .parse()
+                        .context("invalid minimum support")?
+                }
+                "--exact" => structural_mode = StructuralMode::Exact,
+                "--alpha" => structural_mode = StructuralMode::AlphaEquivalent,
+                "--histogram-buckets" => {
+                    let value = args
+                        .next()
+                        .context("--histogram-buckets requires comma-separated numbers")?;
+                    histogram_buckets = value
+                        .split(',')
+                        .map(|part| part.parse().context("invalid histogram bucket"))
+                        .collect::<Result<Vec<_>>>()?;
+                }
+                "--format" => {
+                    format = match args
+                        .next()
+                        .context("--format requires text, json, or csv")?
+                        .as_str()
+                    {
+                        "text" => OutputFormat::Text,
+                        "json" => OutputFormat::Json,
+                        "csv" => OutputFormat::Csv,
+                        other => bail!("invalid output format {other}"),
+                    }
+                }
+                "-h" | "--help" => positional.push("help".into()),
+                option if option.starts_with('-') => bail!("unknown option {option}"),
+                _ => positional.push(argument),
+            }
+        }
+        let command = parse_command(positional)?;
+        Ok(Self {
+            command,
+            filter,
+            format,
+            weighted,
+            transitive,
+            max_depth,
+            limit,
+            tree_depth,
+            minimum_size,
+            minimum_support,
+            structural_mode,
+            histogram_buckets,
+        })
+    }
+
+    pub fn extraction_targets(&self) -> Vec<String> {
+        match &self.command {
+            Command::LegacyDeclarations(targets) => targets.clone(),
+            _ => vec![],
+        }
+    }
+}
+
+fn parse_command(mut args: Vec<String>) -> Result<Command> {
+    if args.is_empty() {
+        return Ok(Command::Summary);
+    }
+    let command = args.remove(0);
+    let take_one = |args: Vec<String>, usage: &str| -> Result<String> {
+        if args.len() != 1 {
+            bail!("usage: {usage}");
+        }
+        Ok(args.into_iter().next().unwrap())
+    };
+    Ok(match command.as_str() {
+        "summary" => {
+            if !args.is_empty() {
+                bail!("summary takes no arguments");
+            }
+            Command::Summary
+        }
+        "declaration" => Command::Declaration(take_one(args, "sieve declaration <name>")?),
+        "dependencies" => Command::Dependencies(take_one(args, "sieve dependencies <name>")?),
+        "dependents" => Command::Dependents(take_one(args, "sieve dependents <name>")?),
+        "path" => {
+            if args.len() != 2 {
+                bail!("usage: sieve path <source> <target>");
+            }
+            Command::Path(args.remove(0), args.remove(0))
+        }
+        "rank" => Command::Rank(take_one(args, "sieve rank <metric>")?),
+        "compare" => {
+            if args.len() != 2 {
+                bail!("usage: sieve compare <left> <right>");
+            }
+            Command::Compare(args.remove(0), args.remove(0))
+        }
+        "duplicates" => {
+            if !args.is_empty() {
+                bail!("duplicates takes no arguments");
+            }
+            Command::Duplicates
+        }
+        "repeated-structures" => {
+            if !args.is_empty() {
+                bail!("repeated-structures takes no arguments");
+            }
+            Command::RepeatedStructures
+        }
+        "modules" => {
+            if !args.is_empty() {
+                bail!("modules takes no arguments");
+            }
+            Command::Modules
+        }
+        "graph" => {
+            if !args.is_empty() {
+                bail!("graph takes no arguments");
+            }
+            Command::Graph
+        }
+        "export" => Command::Export(take_one(
+            args,
+            "sieve export <nodes|edges|modules|metrics>",
+        )?),
+        "help" => Command::Help,
+        _ => {
+            args.insert(0, command);
+            Command::LegacyDeclarations(args)
+        }
+    })
+}
+
+pub fn usage() -> &'static str {
+    "Sieve — analysis of elaborated Lean declarations\n\nCommands:\n  summary\n  declaration <name>\n  dependencies <name> [--transitive]\n  dependents <name> [--transitive]\n  path <source> <target>\n  rank <metric>\n  compare <left> <right>\n  duplicates\n  repeated-structures\n  modules\n  graph\n  export <nodes|edges|modules|metrics|duplicates|repeated>\n\nCommon options:\n  --layer statement|proof|both\n  --include-generated\n  --include-infrastructure\n  --internal-only\n  --source-backed-only\n  --weighted\n  --max-depth N\n  --limit N\n  --format text|json|csv\n  --histogram-buckets N,N,...\n"
+}
+
+pub fn selected_layer(selection: LayerSelection) -> DependencyLayer {
+    match selection {
+        LayerSelection::Proof => DependencyLayer::Proof,
+        LayerSelection::Statement | LayerSelection::Both => DependencyLayer::Statement,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parses_filters_explicitly() {
+        let cli = Cli::parse_from(
+            ["summary", "--include-generated", "--layer", "proof"].map(str::to_owned),
+        )
+        .unwrap();
+        assert!(cli.filter.include_generated);
+        assert_eq!(cli.filter.layer, LayerSelection::Proof);
+    }
+}

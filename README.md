@@ -36,35 +36,85 @@ and whether it is a class, instance, or projection. This allows dependency
 statistics to distinguish mathematical declarations from common elaboration
 infrastructure.
 
-Rust builds declaration indexes, typed dependency edges, reverse-dependency
-indexes, and occurrence multiplicities from this raw data. The stored DAGs can
-support repeated-subexpression analysis and structural comparison without
-losing the original occurrence counts. Sieve also derives raw and
-alpha-normalized structural fingerprints; these identify comparison candidates
-while the complete DAGs remain available for collision-safe equality checks.
+Rust validates the snapshot and builds a reusable `AnalysisCorpus` with
+declaration and symbol indexes, typed forward and reverse dependency edges,
+occurrence multiplicities, and cached structural fingerprints. Analysis
+functions return serializable result values rather than printing directly.
+The stored DAGs support repeated-subexpression analysis and structural
+comparison without losing original occurrence counts. Raw and alpha-normalized
+fingerprints only select candidates; Sieve verifies matches against the complete
+structure to rule out hash collisions.
 
 Tactic invocations and before/after goal states are not part of this compiled
 snapshot. They require a separate source re-elaboration pipeline and should not
 be inferred from the final proof term.
 
-## Run
+## Analyze
 
 ```sh
 lake update
-cargo run
+cargo run -- summary
 ```
 
-Pass fully qualified declaration names to inspect a custom subset:
+Useful commands include:
 
 ```sh
-cargo run -- intervalIntegral.integral_deriv_eq_sub
+cargo run -- declaration intervalIntegral.integral_deriv_eq_sub
+cargo run -- dependencies intervalIntegral.integral_deriv_eq_sub --layer proof
+cargo run -- dependents intervalIntegral.integral_deriv_eq_sub --internal-only
+cargo run -- path intervalIntegral.integral_deriv_eq_sub_uIoo intervalIntegral.integral_deriv_eq_sub
+cargo run -- rank proof-occurrences --limit 20
+cargo run -- compare intervalIntegral.integral_deriv_eq_sub intervalIntegral.integral_deriv_eq_sub' --layer both
+cargo run -- duplicates --alpha
+cargo run -- repeated-structures --layer proof --minimum-size 20 --minimum-support 2
+cargo run -- modules
+cargo run -- graph --internal-only
 ```
 
 Inspect a bounded prefix of an elaborated proof tree:
 
 ```sh
-cargo run -- --tree-depth 4 intervalIntegral.integral_deriv_eq_sub
+cargo run -- declaration intervalIntegral.integral_deriv_eq_sub --tree-depth 4
 ```
+
+Common filters are explicit and are included in every structured result:
+`--layer statement|proof|both`, `--include-generated`,
+`--include-infrastructure`, `--internal-only`, `--source-backed-only`,
+`--kind`, and `--module`. Traversals also accept `--max-depth` and `--limit`.
+Summary histogram boundaries can be changed with `--histogram-buckets N,N,...`.
+Generated/private declarations and class/instance/projection infrastructure are
+excluded by default but remain directly inspectable. Use the corresponding
+include flags when their elaborated structure is relevant.
+
+Use `--format json` for nested results. Flat deterministic CSV tables for
+visualization are available through:
+
+```sh
+cargo run -- export nodes > nodes.csv
+cargo run -- export edges --include-infrastructure > edges.csv
+cargo run -- export modules > modules.csv
+cargo run -- export metrics > metrics.csv
+cargo run -- export duplicates > duplicates.csv
+cargo run -- export repeated --minimum-size 20 > repeated.csv
+```
+
+The `graph` command reports degrees, weighted degrees, PageRank, unweighted
+Brandes betweenness, connected and strongly connected components, articulation
+points, bridges, and deterministic label-propagation communities. Its output
+records the graph layer, filters, weight setting, algorithm, and parameters.
+
+## Interpretation
+
+These analyses are navigation aids, not measures of mathematical merit. A large
+elaborated proof need not be mathematically complex, and a frequently used
+declaration need not be fundamental. Direct proof-term dependencies do not
+recover the author's thought process. Module boundaries are organizational
+signals; type-class instances, projections, equality machinery, and generated
+declarations can dominate raw counts. Structural similarity does not imply the
+same mathematical argument.
+
+The legacy form `cargo run -- <fully-qualified-name>` is retained for targeted
+extraction and inspection.
 
 ## Test
 
