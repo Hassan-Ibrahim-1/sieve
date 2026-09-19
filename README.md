@@ -121,6 +121,20 @@ every condensed edge records the inclusive raw-step path it replaced. Trust
 reports axioms, declaration flags, source/documentation availability, and
 proof-extraction completeness without a safety score.
 
+An intentionally repetitive generated-proof experiment is available without
+changing the default corpus:
+
+```sh
+cargo run --example slop_duplicate_experiment
+```
+
+It adds three neutral-named declarations with the same theorem statement but
+different proof plumbing. The report checks their exact/alpha-equivalence and
+statement-neighbor evidence, then compares the reused declaration's influence
+before and after augmentation. This demonstrates duplicate recognition and
+reuse evidence; it does not label the group a mathematical family or assign a
+mathematical-importance score.
+
 Useful commands include:
 
 ```sh
