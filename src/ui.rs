@@ -1,6 +1,7 @@
 //! Flat, statement-first graph payloads for the browser UI.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -147,6 +148,32 @@ pub struct GraphResponse {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TheoremRankingMetrics {
+    pub load_bearing: usize,
+    pub connected: usize,
+    pub bridge: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TheoremRanking {
+    pub id: String,
+    pub name: String,
+    pub statement: String,
+    pub display_statement: String,
+    pub metrics: TheoremRankingMetrics,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankingResponse {
+    pub schema_version: usize,
+    pub corpus_fingerprint: String,
+    pub theorems: Vec<TheoremRanking>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WitnessResponse {
     pub source: String,
     pub target: String,
@@ -171,6 +198,8 @@ pub struct UiIndex {
     groups: Vec<EquivalenceGroup>,
     group_by_declaration: Vec<usize>,
     direct_dependents: Vec<usize>,
+    theorem_rankings: OnceLock<RankingResponse>,
+    full_graph_rankings: OnceLock<RankingResponse>,
 }
 
 impl UiIndex {
@@ -210,6 +239,8 @@ impl UiIndex {
             groups,
             group_by_declaration,
             direct_dependents,
+            theorem_rankings: OnceLock::new(),
+            full_graph_rankings: OnceLock::new(),
         }
     }
 
@@ -273,6 +304,65 @@ impl UiIndex {
 
     pub fn graph(&self, corpus: &AnalysisCorpus, request: &GraphRequest) -> Result<GraphResponse> {
         Ok(self.corpus_graph(corpus, request))
+    }
+
+    pub fn rankings(&self, corpus: &AnalysisCorpus, request: &GraphRequest) -> RankingResponse {
+        if !request.filters.include_theorems {
+            return RankingResponse {
+                schema_version: 1,
+                corpus_fingerprint: self.fingerprint.clone(),
+                theorems: vec![],
+            };
+        }
+
+        let cache = if request.filters.include_definitions {
+            &self.full_graph_rankings
+        } else {
+            &self.theorem_rankings
+        };
+        cache
+            .get_or_init(|| self.compute_rankings(corpus, request.filters.include_definitions))
+            .clone()
+    }
+
+    fn compute_rankings(
+        &self,
+        corpus: &AnalysisCorpus,
+        include_definitions: bool,
+    ) -> RankingResponse {
+        let mut filter = AnalysisFilter::default();
+        if !include_definitions {
+            filter.declaration_kind = Some("theorem".into());
+        }
+        let centrality = corpus.centrality(&DependencyConfig {
+            filter,
+            ..DependencyConfig::default()
+        });
+        let theorems = centrality
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                let declaration = corpus.declaration(&entry.name)?;
+                (declaration.kind == "theorem" && !declaration.is_hidden_by_default()).then(|| {
+                    TheoremRanking {
+                        id: format!("decl:{}", declaration.name),
+                        name: declaration.name.clone(),
+                        statement: declaration.r#type.clone(),
+                        display_statement: concise(&declaration.r#type, 140),
+                        metrics: TheoremRankingMetrics {
+                            load_bearing: entry.in_degree,
+                            connected: entry.in_degree + entry.out_degree,
+                            bridge: entry.betweenness,
+                        },
+                    }
+                })
+            })
+            .collect();
+        RankingResponse {
+            schema_version: 1,
+            corpus_fingerprint: self.fingerprint.clone(),
+            theorems,
+        }
     }
 
     fn corpus_graph(&self, corpus: &AnalysisCorpus, request: &GraphRequest) -> GraphResponse {
@@ -942,6 +1032,37 @@ mod tests {
         assert_eq!(edge.source, group.id);
         assert_eq!(edge.statement_count, 1);
         assert_eq!(group.metrics["directDependents"], 1.0);
+    }
+
+    #[test]
+    fn rankings_expose_load_connected_and_bridge_metrics_for_theorems() {
+        let mut snapshot = fixture(3).snapshot().clone();
+        snapshot.declarations[1].r#type = "Fixture.t000".into();
+        snapshot.declarations[1].type_graph.nodes[0].name = Some("Fixture.t000".into());
+        snapshot.declarations[1].statement_dependencies = vec!["Fixture.t000".into()];
+        snapshot.declarations[2].r#type = "Fixture.t001".into();
+        snapshot.declarations[2].type_graph.nodes[0].name = Some("Fixture.t001".into());
+        snapshot.declarations[2].statement_dependencies = vec!["Fixture.t001".into()];
+        let corpus = AnalysisCorpus::new(snapshot).unwrap();
+        let index = UiIndex::build(&corpus);
+        let rankings = index.rankings(
+            &corpus,
+            &GraphRequest {
+                filters: UiFilters {
+                    include_definitions: false,
+                    ..UiFilters::default()
+                },
+            },
+        );
+        let middle = rankings
+            .theorems
+            .iter()
+            .find(|theorem| theorem.name == "Fixture.t001")
+            .unwrap();
+
+        assert_eq!(middle.metrics.load_bearing, 1);
+        assert_eq!(middle.metrics.connected, 2);
+        assert!(middle.metrics.bridge > 0.0);
     }
 
     #[test]

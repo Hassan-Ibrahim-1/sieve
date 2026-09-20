@@ -28,4 +28,18 @@ describe("GraphControls", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Emphasize most used" }));
     expect(dispatch).toHaveBeenCalledWith({ type: "patch", value: { mostUsed: true } });
   });
+
+  it("dispatches a graph reset", () => {
+    const dispatch = vi.fn();
+    render(<GraphControls state={initialState} dispatch={dispatch} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reset graph" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "reset" });
+  });
+
+  it("hides canvas-only controls while analyzing", () => {
+    render(<GraphControls state={{ ...initialState, graphMode: "ranking" }} dispatch={vi.fn()} />);
+    expect(screen.getByText("Analysis")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Show labels" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "Maximum witness paths" })).not.toBeInTheDocument();
+  });
 });

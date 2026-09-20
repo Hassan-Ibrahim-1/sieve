@@ -7,6 +7,7 @@ interface Props {
   data: GraphResponse;
   mostUsed: boolean;
   showLabels: boolean;
+  resetVersion: number;
   selected?: string;
   selectedEdge?: string;
   theme: Theme;

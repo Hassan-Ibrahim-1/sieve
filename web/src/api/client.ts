@@ -1,4 +1,4 @@
-import type { Bootstrap, GraphResponse, ProofOutlineResponse, WitnessResponse } from "./types";
+import type { Bootstrap, GraphResponse, ProofOutlineResponse, RankingResponse, WitnessResponse } from "./types";
 import type { UiState } from "../app/state";
 
 async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -16,6 +16,13 @@ export const api = {
       includeDefinitions: String(state.filters.includeDefinitions),
     });
     return request<GraphResponse>(`/api/ui/graph?${query}`, signal);
+  },
+  rankings(state: UiState, signal?: AbortSignal) {
+    const query = new URLSearchParams({
+      includeTheorems: String(state.filters.includeTheorems),
+      includeDefinitions: String(state.filters.includeDefinitions),
+    });
+    return request<RankingResponse>(`/api/ui/rankings?${query}`, signal);
   },
   proofOutline(name: string, signal?: AbortSignal) {
     const query = new URLSearchParams({ name });

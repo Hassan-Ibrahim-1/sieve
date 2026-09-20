@@ -14,6 +14,7 @@ interface Props {
   data: GraphResponse;
   mostUsed: boolean;
   showLabels: boolean;
+  resetVersion: number;
   selected?: string;
   selectedEdge?: string;
   theme: Theme;
@@ -24,7 +25,7 @@ interface Props {
 }
 
 export function GraphRenderer(props: Props) {
-  const { data, mostUsed, showLabels, selected, selectedEdge, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
+  const { data, mostUsed, showLabels, resetVersion, selected, selectedEdge, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
   const loadGraph = useLoadGraph();
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
@@ -156,6 +157,14 @@ export function GraphRenderer(props: Props) {
     if (saved) sigma.getCamera().setState(saved);
     return () => { cameraCache.set(layoutKey, sigma.getCamera().getState()); };
   }, [layoutKey, sigma]);
+
+  useEffect(() => {
+    if (resetVersion === 0) return;
+    cameraCache.delete(layoutKey);
+    sigma.getCamera().animatedReset({
+      duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 240,
+    });
+  }, [layoutKey, resetVersion, sigma]);
 
   useEffect(() => {
     const camera = sigma.getCamera();

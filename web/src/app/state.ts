@@ -1,8 +1,11 @@
-import type { UiFilters } from "../api/types";
+import type { RankingMetric, UiFilters } from "../api/types";
 
 export interface UiState {
   view: "sieve" | "proof";
   proofDeclaration?: string;
+  graphMode: "graph" | "ranking";
+  rankingMetric: RankingMetric;
+  graphResetVersion: number;
   mostUsed: boolean;
   showLabels: boolean;
   witnessLimit: number;
@@ -19,6 +22,9 @@ export type Action =
 
 export const initialState: UiState = {
   view: "sieve",
+  graphMode: "graph",
+  rankingMetric: "loadBearing",
+  graphResetVersion: 0,
   mostUsed: false,
   showLabels: true,
   witnessLimit: 3,
@@ -30,7 +36,7 @@ export function reducer(state: UiState, action: Action): UiState {
     case "patch": return { ...state, ...action.value };
     case "select": return { ...state, selected: action.id, selectedEdge: undefined };
     case "selectEdge": return { ...state, selectedEdge: action.id, selected: undefined };
-    case "reset": return initialState;
+    case "reset": return { ...initialState, graphResetVersion: state.graphResetVersion + 1 };
   }
 }
 
@@ -40,6 +46,8 @@ export function stateFromUrl(search: string): UiState {
     ...initialState,
     view: params.get("view") === "proof" ? "proof" : "sieve",
     proofDeclaration: params.get("proof") || undefined,
+    graphMode: params.get("graphMode") === "ranking" ? "ranking" : "graph",
+    rankingMetric: rankingMetricParam(params.get("ranking")),
     mostUsed: booleanParam(params, "mostUsed", false),
     showLabels: booleanParam(params, "labels", initialState.showLabels),
     witnessLimit: boundedNumber(params.get("witnessLimit"), 1, 8, initialState.witnessLimit),
@@ -50,6 +58,10 @@ export function stateFromUrl(search: string): UiState {
       includeDefinitions: booleanParam(params, "definitions", initialState.filters.includeDefinitions),
     },
   };
+}
+
+function rankingMetricParam(value: string | null): RankingMetric {
+  return value === "connected" || value === "bridge" ? value : "loadBearing";
 }
 
 function boundedNumber(value: string | null, minimum: number, maximum: number, fallback: number) {
@@ -68,6 +80,8 @@ export function writeStateToUrl(state: UiState) {
   const params = new URLSearchParams();
   if (state.view === "proof") params.set("view", "proof");
   if (state.proofDeclaration) params.set("proof", state.proofDeclaration);
+  if (state.graphMode === "ranking") params.set("graphMode", "ranking");
+  params.set("ranking", state.rankingMetric);
   params.set("mostUsed", state.mostUsed ? "1" : "0");
   params.set("labels", state.showLabels ? "1" : "0");
   params.set("witnessLimit", String(state.witnessLimit));

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { api } from "../api/client";
-import type { Bootstrap, GraphEdge, GraphResponse, ProofOutlineResponse, WitnessResponse } from "../api/types";
+import type { Bootstrap, GraphEdge, GraphResponse, ProofOutlineResponse, RankingResponse, WitnessResponse } from "../api/types";
+import { TheoremRankings } from "../analysis/TheoremRankings";
 import { GraphControls } from "../controls/GraphControls";
 import { GraphCanvas } from "../graph/GraphCanvas";
 import { GraphHeader } from "../graph/GraphHeader";
@@ -16,6 +17,9 @@ export function App() {
   const [state, dispatch] = useReducer(reducer, undefined, () => typeof location === "undefined" ? initialState : stateFromUrl(location.search));
   const [bootstrap, setBootstrap] = useState<Bootstrap>();
   const [data, setData] = useState<GraphResponse>();
+  const [rankings, setRankings] = useState<RankingResponse>();
+  const [rankingBusy, setRankingBusy] = useState(false);
+  const [rankingError, setRankingError] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [witnesses, setWitnesses] = useState<WitnessResponse>();
@@ -33,6 +37,18 @@ export function App() {
     api.graph(state, controller.signal).then(setData).catch((error) => { if (error.name !== "AbortError") setError(error.message); }).finally(() => setBusy(false));
     return () => controller.abort();
   }, [state.filters]);
+
+  useEffect(() => {
+    if (state.view !== "sieve" || state.graphMode !== "ranking") return;
+    const controller = new AbortController();
+    setRankingBusy(true);
+    setRankingError(undefined);
+    api.rankings(state, controller.signal)
+      .then(setRankings)
+      .catch((error) => { if (error.name !== "AbortError") setRankingError(error.message); })
+      .finally(() => { if (!controller.signal.aborted) setRankingBusy(false); });
+    return () => controller.abort();
+  }, [state.filters, state.graphMode, state.view]);
 
   useEffect(() => {
     if (!bootstrap || state.view !== "proof") return;
@@ -96,6 +112,11 @@ export function App() {
     dispatch({ type: "patch", value: { view, proofDeclaration: selectedProof } });
   };
 
+  const changeGraphMode = (graphMode: "graph" | "ranking") => {
+    if (graphMode === "ranking" && state.selectedEdge) dispatch({ type: "select", id: undefined });
+    dispatch({ type: "patch", value: { graphMode } });
+  };
+
   if (state.view === "proof") {
     return <AppShell theme={theme} view={state.view} onTheme={toggle} onView={changeView}
       controls={<ProofControls bootstrap={bootstrap} declaration={state.proofDeclaration} data={proof}
@@ -120,16 +141,23 @@ export function App() {
       controls={<GraphControls state={state} dispatch={dispatch} bootstrap={bootstrap} />}
       inspector={<Inspector node={selectedNode} edge={selectedEdge} witnesses={witnesses} busy={busy}
         onWitnesses={showWitnesses} onCloseDetail={() => setWitnesses(undefined)} />}>
-      {data && <GraphHeader data={data} />}
-      <div className="graph-stage" data-loading={busy}>
-        {data && <GraphCanvas data={data} mostUsed={state.mostUsed} showLabels={state.showLabels}
+      {data && <GraphHeader data={data} mode={state.graphMode} rankingMetric={state.rankingMetric}
+        rankingCount={rankings?.theorems.length} onMode={changeGraphMode}
+        onRankingMetric={(rankingMetric) => dispatch({ type: "patch", value: { rankingMetric } })} />}
+      <div className="graph-stage" data-loading={state.graphMode === "graph" ? busy : rankingBusy}>
+        {state.graphMode === "graph" && data && <GraphCanvas data={data} mostUsed={state.mostUsed} showLabels={state.showLabels}
+          resetVersion={state.graphResetVersion}
           selected={state.selected} selectedEdge={state.selectedEdge}
           theme={theme}
           onSelect={selectNode} onSelectEdge={(id) => dispatch({ type: "selectEdge", id })}
           onOpen={selectNode} onOpenEdge={openEdge} />}
-        {busy && !data && <div className="loading-state"><span className="loading-ring" /></div>}
-        {error && <div className="error-state"><span>!</span><p>{error}</p><button onClick={() => location.reload()}>Retry</button></div>}
-        {!busy && !error && data?.nodes.length === 0 && <div className="empty-state">No statements match the current filters.</div>}
+        {state.graphMode === "ranking" && rankings && <TheoremRankings data={rankings} metric={state.rankingMetric}
+          selected={state.selected} onSelect={selectNode} />}
+        {state.graphMode === "graph" && busy && !data && <div className="loading-state"><span className="loading-ring" /></div>}
+        {state.graphMode === "ranking" && rankingBusy && !rankings && <div className="loading-state"><span className="loading-ring" /></div>}
+        {state.graphMode === "graph" && error && <div className="error-state"><span>!</span><p>{error}</p><button onClick={() => location.reload()}>Retry</button></div>}
+        {state.graphMode === "ranking" && rankingError && <div className="error-state"><span>!</span><p>{rankingError}</p><button onClick={() => location.reload()}>Retry</button></div>}
+        {state.graphMode === "graph" && !busy && !error && data?.nodes.length === 0 && <div className="empty-state">No statements match the current filters.</div>}
       </div>
     </AppShell>;
 }

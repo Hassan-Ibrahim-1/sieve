@@ -14,8 +14,20 @@ describe("UI state", () => {
     expect(state.proofDeclaration).toBe("Fixture.theorem");
   });
 
+  it("loads theorem ranking mode and metric from the URL", () => {
+    const state = stateFromUrl("?graphMode=ranking&ranking=bridge");
+    expect(state.graphMode).toBe("ranking");
+    expect(state.rankingMetric).toBe("bridge");
+  });
+
   it("resets the graph controls", () => {
     const state = reducer({ ...initialState, mostUsed: true, witnessLimit: 8 }, { type: "reset" });
-    expect(state).toEqual(initialState);
+    expect(state).toEqual({ ...initialState, graphResetVersion: 1 });
+  });
+
+  it("emits a fresh graph reset signal even when controls are already at their defaults", () => {
+    const first = reducer(initialState, { type: "reset" });
+    const second = reducer(first, { type: "reset" });
+    expect(second.graphResetVersion).toBe(2);
   });
 });

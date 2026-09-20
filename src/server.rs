@@ -205,6 +205,7 @@ async fn serve_async(state: AppState, port: u16) -> Result<()> {
         .route("/path", get(path_route))
         .route("/ui/bootstrap", get(ui_bootstrap))
         .route("/ui/graph", get(ui_graph))
+        .route("/ui/rankings", get(ui_rankings))
         .route("/ui/proof-outline", get(ui_proof_outline))
         .route("/ui/search", get(ui_search))
         .route("/ui/witnesses", get(ui_witnesses))
@@ -278,6 +279,20 @@ async fn ui_graph(
         .graph(&state.corpus, &request)
         .map(Json)
         .map_err(ApiError::bad_request)
+}
+
+async fn ui_rankings(
+    State(state): State<AppState>,
+    Query(query): Query<UiGraphQuery>,
+) -> Json<crate::ui::RankingResponse> {
+    let request = GraphRequest {
+        filters: UiFilters {
+            include_theorems: query.include_theorems.unwrap_or(true),
+            include_definitions: query.include_definitions.unwrap_or(true),
+            include_technical: query.include_technical.unwrap_or(false),
+        },
+    };
+    Json(state.ui.rankings(&state.corpus, &request))
 }
 
 async fn ui_proof_outline(

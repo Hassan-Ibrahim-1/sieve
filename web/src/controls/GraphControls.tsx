@@ -11,16 +11,19 @@ interface Props {
 export function GraphControls({ state, dispatch, bootstrap }: Props) {
   return (
     <aside className="sidebar" aria-label="Graph controls">
-      <section>
+      {state.graphMode === "graph" ? <section>
         <h2>View</h2>
         <Check label="Emphasize most used" checked={state.mostUsed}
           onChange={(mostUsed) => dispatch({ type: "patch", value: { mostUsed } })} />
         <Check label="Show labels" checked={state.showLabels}
           onChange={(showLabels) => dispatch({ type: "patch", value: { showLabels } })} />
-      </section>
+      </section> : <section className="analysis-summary">
+        <h2>Analysis</h2>
+        <p>Rank theorems using structural metrics from the current dependency graph.</p>
+      </section>}
 
-      <RangeField label="Maximum witness paths" value={state.witnessLimit} min={1} max={8} step={1}
-        display={String(state.witnessLimit)} onChange={(witnessLimit) => dispatch({ type: "patch", value: { witnessLimit } })} />
+      {state.graphMode === "graph" && <RangeField label="Maximum witness paths" value={state.witnessLimit} min={1} max={8} step={1}
+        display={String(state.witnessLimit)} onChange={(witnessLimit) => dispatch({ type: "patch", value: { witnessLimit } })} />}
 
       <section>
         <h2>Declarations</h2>

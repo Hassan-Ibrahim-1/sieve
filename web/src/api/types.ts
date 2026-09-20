@@ -100,6 +100,22 @@ export interface GraphResponse {
   edges: GraphEdge[];
 }
 
+export type RankingMetric = "loadBearing" | "connected" | "bridge";
+
+export interface TheoremRanking {
+  id: string;
+  name: string;
+  statement: string;
+  displayStatement: string;
+  metrics: Record<RankingMetric, number>;
+}
+
+export interface RankingResponse {
+  schemaVersion: number;
+  corpusFingerprint: string;
+  theorems: TheoremRanking[];
+}
+
 export interface WitnessResponse {
   source: string;
   target: string;
