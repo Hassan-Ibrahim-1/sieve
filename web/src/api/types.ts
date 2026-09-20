@@ -1,7 +1,6 @@
 export interface UiFilters {
   includeTheorems: boolean;
   includeDefinitions: boolean;
-  includeTechnical: boolean;
 }
 
 export interface Bootstrap {
@@ -52,30 +51,8 @@ export interface GraphResponse {
   edges: GraphEdge[];
 }
 
-export interface SimilarityComponents {
-  dependencyJaccard: number;
-  kindHistogramCosine: number;
-  sizeRatio: number;
-  depthRatio: number;
-  combinedScore: number;
-}
-
-export interface Comparison {
-  left: string;
-  right: string;
-  layer: "statement" | "proof";
-  exactEqual: boolean;
-  alphaEquivalent: boolean;
-  similarity: SimilarityComponents;
-  sharedDependencies: string[];
-  leftOnlyDependencies: string[];
-  rightOnlyDependencies: string[];
-}
-
 export interface WitnessResponse {
   source: string;
   target: string;
   paths: Array<{ nodes: string[]; layers: string[]; totalWeight: number }>;
 }
-
-export interface SearchResponse { results: GraphNode[] }

@@ -1,16 +1,14 @@
 import type { Dispatch } from "react";
 import type { Bootstrap } from "../api/types";
 import type { Action, UiState } from "../app/state";
-import { SearchControl } from "./SearchControl";
 
 interface Props {
   state: UiState;
   dispatch: Dispatch<Action>;
   bootstrap?: Bootstrap;
-  onSearchSelect: (id: string) => void;
 }
 
-export function GraphControls({ state, dispatch, bootstrap, onSearchSelect }: Props) {
+export function GraphControls({ state, dispatch, bootstrap }: Props) {
   return (
     <aside className="sidebar" aria-label="Graph controls">
       <section>
@@ -18,8 +16,6 @@ export function GraphControls({ state, dispatch, bootstrap, onSearchSelect }: Pr
         <Check label="Emphasize most used" checked={state.mostUsed}
           onChange={(mostUsed) => dispatch({ type: "patch", value: { mostUsed } })} />
       </section>
-
-      <SearchControl value={state.search} onChange={(search) => dispatch({ type: "patch", value: { search } })} onSelect={onSearchSelect} />
 
       <RangeField label="Maximum witness paths" value={state.witnessLimit} min={1} max={8} step={1}
         display={String(state.witnessLimit)} onChange={(witnessLimit) => dispatch({ type: "patch", value: { witnessLimit } })} />
@@ -30,8 +26,6 @@ export function GraphControls({ state, dispatch, bootstrap, onSearchSelect }: Pr
           onChange={(includeTheorems) => dispatch({ type: "patch", value: { filters: { ...state.filters, includeTheorems } } })} />
         <Check label="Definitions" checked={state.filters.includeDefinitions}
           onChange={(includeDefinitions) => dispatch({ type: "patch", value: { filters: { ...state.filters, includeDefinitions } } })} />
-        <Check label="Technical declarations" checked={state.filters.includeTechnical}
-          onChange={(includeTechnical) => dispatch({ type: "patch", value: { filters: { ...state.filters, includeTechnical } } })} />
       </section>
 
       <div className="sidebar-spacer" />

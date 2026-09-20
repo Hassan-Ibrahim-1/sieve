@@ -205,7 +205,6 @@ async fn serve_async(state: AppState, port: u16) -> Result<()> {
         .route("/ui/bootstrap", get(ui_bootstrap))
         .route("/ui/graph", get(ui_graph))
         .route("/ui/search", get(ui_search))
-        .route("/ui/compare", get(compare_route))
         .route("/ui/witnesses", get(ui_witnesses))
         .fallback(api_not_found);
     let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist");

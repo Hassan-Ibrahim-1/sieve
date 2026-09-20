@@ -364,7 +364,6 @@ impl UiIndex {
             ("recommended".into(), self.direct_dependents[id] as f64),
         ]);
         let technical = declaration.is_hidden_by_default() || !is_math_kind(&declaration.kind);
-        let actions = vec!["pin".into()];
         GraphNode {
             id: format!("decl:{}", declaration.name),
             node_kind: "declaration".into(),
@@ -379,7 +378,7 @@ impl UiIndex {
             generated: declaration.is_generated(),
             technical,
             position: stable_position(&declaration.name),
-            actions,
+            actions: vec!["inspect".into()],
         }
     }
 

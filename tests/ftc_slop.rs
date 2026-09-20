@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use sieve::AnalysisCorpus;
 use sieve::analysis::filters::AnalysisFilter;
 use sieve::extraction::{ExtractionConfig, extract};
+use sieve::ui::{GraphRequest, UiIndex};
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -194,4 +195,31 @@ fn import_only_module_warns_without_failing() {
     assert!(stderr.contains("FtcSlop contribute no declarations defined directly"));
     assert!(stderr.contains("does not traverse imported dependencies"));
     assert!(stdout.contains("corpus: 0 declarations"));
+}
+
+#[test]
+fn similarity_circle_fixture_has_three_connected_groups() {
+    let fixture = built_fixture();
+    let config = ExtractionConfig::new(fixture, vec!["FtcSlop.SimilarityCircles".into()]).unwrap();
+    let corpus = AnalysisCorpus::new(extract(&config, &[]).unwrap()).unwrap();
+    let graph = UiIndex::build(&corpus)
+        .graph(&corpus, &GraphRequest::default())
+        .unwrap();
+
+    assert_eq!(graph.totals.declarations, 9);
+    assert_eq!(graph.totals.groups, 3);
+    let mut group_sizes = graph
+        .nodes
+        .iter()
+        .filter(|node| node.node_kind == "group")
+        .map(|node| node.member_count)
+        .collect::<Vec<_>>();
+    group_sizes.sort_unstable();
+    assert_eq!(group_sizes, vec![2, 3, 3]);
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| { edge.source.starts_with("group-") && edge.target.starts_with("group-") })
+    );
 }

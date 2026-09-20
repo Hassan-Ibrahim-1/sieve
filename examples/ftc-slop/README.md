@@ -43,3 +43,21 @@ cargo run -- --project examples/ftc-slop \
 The default summary contains seven authored declarations (two definitions and
 five theorems). Add `--include-generated` to include the two equation theorems,
 for nine declarations and seven theorems total.
+
+## Similarity-circle UI fixture
+
+`FtcSlop.SimilarityCircles` is a separate, deliberately repetitive module for
+exercising the combined similarity-and-dependency graph. It contains three
+equivalence groups: three identity theorems, three conjunction-introduction
+theorems, and two double-negation-introduction theorems. A final singleton
+theorem creates connections between the groups.
+
+From the repository root, open this fixture in the UI with:
+
+```sh
+cargo run -- --project examples/ftc-slop \
+  --import FtcSlop.SimilarityCircles serve
+```
+
+The graph header should report nine declarations and three groups, and the
+graph should display three translucent similarity circles.

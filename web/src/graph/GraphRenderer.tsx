@@ -1,20 +1,20 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import { MultiDirectedGraph } from "graphology";
-import type { GraphNode, GraphResponse } from "../api/types";
+import type { GraphResponse } from "../api/types";
 import type { Theme } from "../theme/useTheme";
 import { nodeColor, nodeSize, palette } from "./graphStyles";
+import { groupRadiusAtZoom, nodeLabelsAreVisible } from "./graphZoom";
 
 const layoutCache = new Map<string, Record<string, { x: number; y: number }>>();
 const cameraCache = new Map<string, { x: number; y: number; angle: number; ratio: number }>();
+const TRANSPARENT_GROUP_COLOR = "rgba(0, 0, 0, 0)";
 
 interface Props {
   data: GraphResponse;
   mostUsed: boolean;
   selected?: string;
   selectedEdge?: string;
-  pins: string[];
-  search: string;
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;
@@ -23,10 +23,11 @@ interface Props {
 }
 
 export function GraphRenderer(props: Props) {
-  const { data, mostUsed, selected, selectedEdge, pins, search, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
+  const { data, mostUsed, selected, selectedEdge, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
   const loadGraph = useLoadGraph();
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
+  const [hoveredGroup, setHoveredGroup] = useState<string>();
   const nodeSignature = useMemo(() => data.nodes.map((node) => node.id).join("|"), [data.nodes]);
   const layoutKey = `${data.corpusFingerprint}:${mostUsed ? "usage" : "default"}:${nodeSignature}`;
   const maximum = useMemo(
@@ -43,10 +44,11 @@ export function GraphRenderer(props: Props) {
         x: position.x,
         y: position.y,
         size: nodeSize(node, mostUsed, maximum),
-        label: compactGraphLabel(node.displayStatement, node.nodeKind === "group" ? 46 : 38),
+        label: node.nodeKind === "group" ? "" : compactGraphLabel(node.displayStatement),
         labelTheme: theme,
-        color: node.nodeKind === "group" ? groupMaskColor(theme) : nodeColor(node),
+        color: node.nodeKind === "group" ? TRANSPARENT_GROUP_COLOR : nodeColor(node),
         nodeKind: node.nodeKind,
+        type: node.nodeKind === "group" ? "group" : "circle",
         zIndex: node.nodeKind === "group" ? 0 : 1,
       });
     }
@@ -93,7 +95,7 @@ export function GraphRenderer(props: Props) {
     const groups = data.nodes.filter((node) => node.nodeKind === "group");
     if (groups.length === 0) return;
 
-    const canvas = sigma.createCanvas(layerId, { beforeLayer: "labels", style: { pointerEvents: "none" } });
+    const canvas = sigma.createCanvas(layerId, { beforeLayer: "nodes", style: { pointerEvents: "none" } });
     const context = canvas.getContext("2d");
     if (!context) return () => sigma.killLayer(layerId);
 
@@ -110,12 +112,17 @@ export function GraphRenderer(props: Props) {
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
+      const cameraRatio = sigma.getCamera().getState().ratio;
       for (const group of groups) {
         const point = sigma.getNodeDisplayData(group.id);
         if (!point) continue;
+        const viewportPoint = sigma.framedGraphToViewport(point);
+        const active = group.id === selected || group.id === hoveredGroup;
         context.beginPath();
-        context.arc(point.x, point.y, point.size, 0, Math.PI * 2);
-        context.fillStyle = theme === "dark" ? "rgba(66, 199, 147, .075)" : "rgba(24, 128, 92, .065)";
+        context.arc(viewportPoint.x, viewportPoint.y, groupRadiusAtZoom(point.size, cameraRatio), 0, Math.PI * 2);
+        context.fillStyle = active
+          ? theme === "dark" ? "rgba(20, 96, 68, .24)" : "rgba(16, 96, 68, .16)"
+          : theme === "dark" ? "rgba(66, 199, 147, .075)" : "rgba(24, 128, 92, .065)";
         context.fill();
         context.strokeStyle = theme === "dark" ? "rgba(98, 219, 171, .5)" : "rgba(20, 112, 81, .42)";
         context.lineWidth = group.id === selected ? 2.5 : 1.5;
@@ -129,15 +136,19 @@ export function GraphRenderer(props: Props) {
       sigma.off("afterRender", draw);
       if (sigma.getCanvases()[layerId]) sigma.killLayer(layerId);
     };
-  }, [data.nodes, selected, sigma, theme]);
+  }, [data.nodes, hoveredGroup, selected, sigma, theme]);
 
   useEffect(() => registerEvents({
     clickNode: ({ node }) => onSelect(node),
     doubleClickNode: ({ node, event }) => { event.preventSigmaDefault(); onOpen(node); },
     clickEdge: ({ edge }) => onSelectEdge(edge),
     doubleClickEdge: ({ edge, event }) => { event.preventSigmaDefault(); onOpenEdge(edge); },
+    enterNode: ({ node }) => {
+      if (sigma.getGraph().getNodeAttribute(node, "nodeKind") === "group") setHoveredGroup(node);
+    },
+    leaveNode: ({ node }) => setHoveredGroup((current) => current === node ? undefined : current),
     clickStage: () => { onSelect(undefined); onSelectEdge(undefined); },
-  }), [onOpen, onOpenEdge, onSelect, onSelectEdge, registerEvents]);
+  }), [onOpen, onOpenEdge, onSelect, onSelectEdge, registerEvents, sigma]);
 
   useEffect(() => {
     const saved = cameraCache.get(layoutKey);
@@ -146,17 +157,28 @@ export function GraphRenderer(props: Props) {
   }, [layoutKey, sigma]);
 
   useEffect(() => {
+    const camera = sigma.getCamera();
+    let labelsVisible: boolean | undefined;
+    const syncLabelVisibility = (state: ReturnType<typeof camera.getState>) => {
+      const nextLabelsVisible = nodeLabelsAreVisible(state.ratio);
+      if (nextLabelsVisible === labelsVisible) return;
+      labelsVisible = nextLabelsVisible;
+      sigma.setSetting("renderLabels", nextLabelsVisible);
+    };
+
+    syncLabelVisibility(camera.getState());
+    camera.on("updated", syncLabelVisibility);
+    return () => { camera.removeListener("updated", syncLabelVisibility); };
+  }, [sigma]);
+
+  useEffect(() => {
     if (!selected || !sigma.getGraph().hasNode(selected)) return;
     const position = sigma.getNodeDisplayData(selected);
     if (position) sigma.getCamera().animate(position, { duration: 300 });
   }, [selected, sigma]);
 
   useEffect(() => {
-    const normalized = search.trim().toLowerCase();
     const byId = new Map(data.nodes.map((node) => [node.id, node]));
-    const matchingGroups = new Set(data.nodes
-      .filter((node) => node.nodeKind === "declaration" && node.groupId && matches(node, normalized))
-      .map((node) => node.groupId!));
     const topLabels = new Set(data.nodes
       .filter((node) => node.nodeKind === "declaration")
       .slice().sort((a, b) => (b.metrics.directDependents ?? 0) - (a.metrics.directDependents ?? 0))
@@ -165,24 +187,20 @@ export function GraphRenderer(props: Props) {
     const selectedEndpoint = selectedNode?.groupId ?? selected;
     sigma.setSetting("nodeReducer", (node, attributes) => {
       const source = byId.get(node);
-      const match = !normalized || !!source && (
-        matches(source, normalized)
-        || matchingGroups.has(source.id)
-        || !!source.groupId && matchingGroups.has(source.groupId)
-      );
       const graph = sigma.getGraph();
+      const active = node === selected || node === hoveredGroup;
       const sameGroup = selectedNode?.nodeKind === "group"
         ? source?.groupId === selectedNode.id
         : !!selectedNode?.groupId && (source?.groupId === selectedNode.groupId || source?.id === selectedNode.groupId);
       const relevant = !selectedEndpoint || !graph.hasNode(selectedEndpoint) || node === selectedEndpoint || sameGroup || graph.neighbors(selectedEndpoint).includes(node);
       return {
         ...attributes,
-        color: source?.nodeKind === "group" ? groupMaskColor(theme) : !match || !relevant ? "#9aa29f" : attributes.color,
+        color: source?.nodeKind === "group" ? TRANSPARENT_GROUP_COLOR : !relevant ? "#9aa29f" : attributes.color,
         hidden: false,
-        highlighted: node === selected || pins.includes(node),
-        forceLabel: node === selected || pins.includes(node) || topLabels.has(node),
+        highlighted: node === selected,
+        forceLabel: node === selected || topLabels.has(node),
         labelTheme: theme,
-        zIndex: node === selected || pins.includes(node) ? 3 : source?.nodeKind === "group" ? 0 : 1,
+        zIndex: source?.nodeKind === "group" ? 0 : active ? 3 : 1,
       };
     });
     sigma.setSetting("edgeReducer", (edge, attributes) => {
@@ -191,16 +209,8 @@ export function GraphRenderer(props: Props) {
       return { ...attributes, hidden: !relevant, color: edge === selectedEdge ? palette.accent : attributes.color, size: edge === selectedEdge ? 3 : attributes.size };
     });
     sigma.refresh();
-  }, [data.nodes, pins, search, selected, selectedEdge, sigma, theme]);
+  }, [data.nodes, hoveredGroup, selected, selectedEdge, sigma, theme]);
   return null;
-}
-
-function matches(node: GraphNode, normalized: string) {
-  return !normalized || `${node.statement} ${node.leanName ?? ""}`.toLowerCase().includes(normalized);
-}
-
-function groupMaskColor(theme: Theme) {
-  return theme === "dark" ? "#0b0e0d" : "#f3f5f2";
 }
 
 export function compactGraphLabel(value: string, maximum = 38) {

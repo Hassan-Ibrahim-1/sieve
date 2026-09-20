@@ -1,5 +1,5 @@
 import { SigmaContainer } from "@react-sigma/core";
-import { EdgeArrowProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
+import { EdgeArrowProgram, NodeCircleProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
 import type { Settings } from "sigma/settings";
 import type { GraphResponse } from "../api/types";
 import type { Theme } from "../theme/useTheme";
@@ -10,8 +10,6 @@ interface Props {
   mostUsed: boolean;
   selected?: string;
   selectedEdge?: string;
-  pins: string[];
-  search: string;
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;
@@ -32,7 +30,7 @@ export function GraphCanvas(props: Props) {
 }
 
 const drawNodeLabel: NodeLabelDrawingFunction = (context, data, settings) => {
-  if (!data.label) return;
+  if (!settings.renderLabels || !data.label) return;
   const dark = (data as typeof data & { labelTheme?: Theme }).labelTheme === "dark";
   const fontSize = settings.labelSize;
   context.font = `${settings.labelWeight} ${fontSize}px ${settings.labelFont}`;
@@ -55,6 +53,12 @@ const drawNodeLabel: NodeLabelDrawingFunction = (context, data, settings) => {
   context.fillText(data.label, data.x, y + height / 2 + 0.5);
 };
 
+// Groups already have a dedicated canvas treatment. Repainting their large
+// WebGL disk on hover would cover the member nodes inside them.
+class GroupHoverProgram extends NodeCircleProgram {
+  render() {}
+}
+
 // This object must stay referentially stable. React Sigma reconstructs its WebGL
 // renderer whenever settings change, which is unsafe during rapid slider updates.
 const graphSettings: Partial<Settings> = {
@@ -71,6 +75,8 @@ const graphSettings: Partial<Settings> = {
   defaultDrawNodeHover: drawNodeLabel,
   stagePadding: 95,
   zIndex: true,
+  nodeProgramClasses: { group: NodeCircleProgram },
+  nodeHoverProgramClasses: { group: GroupHoverProgram },
   edgeProgramClasses: { arrow: EdgeArrowProgram },
   defaultEdgeType: "line",
 };

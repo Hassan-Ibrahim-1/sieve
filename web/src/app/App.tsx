@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { api } from "../api/client";
-import type { Bootstrap, Comparison, GraphEdge, GraphResponse, WitnessResponse } from "../api/types";
+import type { Bootstrap, GraphEdge, GraphResponse, WitnessResponse } from "../api/types";
 import { GraphControls } from "../controls/GraphControls";
 import { GraphCanvas } from "../graph/GraphCanvas";
 import { GraphHeader } from "../graph/GraphHeader";
@@ -15,7 +15,6 @@ export function App() {
   const [data, setData] = useState<GraphResponse>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
-  const [comparison, setComparison] = useState<Comparison[]>();
   const [witnesses, setWitnesses] = useState<WitnessResponse>();
   const { theme, toggle } = useTheme();
 
@@ -31,7 +30,7 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (comparison || witnesses) { setComparison(undefined); setWitnesses(undefined); return; }
+      if (witnesses) { setWitnesses(undefined); return; }
       dispatch({ type: "select", id: undefined });
     };
     addEventListener("keydown", onKey);
@@ -40,13 +39,6 @@ export function App() {
 
   const selectedNode = useMemo(() => data?.nodes.find((node) => node.id === state.selected), [data, state.selected]);
   const selectedEdge = useMemo(() => data?.edges.find((edge) => edge.id === state.selectedEdge), [data, state.selectedEdge]);
-
-  const comparePins = () => {
-    if (state.pins.length !== 2) return;
-    setBusy(true);
-    api.compare(...state.pins.map((id) => id.replace(/^decl:/, "")) as [string, string])
-      .then(setComparison).catch((error) => setError(error.message)).finally(() => setBusy(false));
-  };
 
   const showWitnesses = (edge: GraphEdge) => {
     setBusy(true);
@@ -60,22 +52,17 @@ export function App() {
     if (edge.witnessAvailable) showWitnesses(edge);
   };
 
-  const searchSelect = (id: string) => {
-    dispatch({ type: "select", id });
-  };
-
   const selectNode = (id?: string) => {
     dispatch({ type: "select", id });
   };
 
   return <AppShell theme={theme} onTheme={toggle}
-    controls={<GraphControls state={state} dispatch={dispatch} bootstrap={bootstrap} onSearchSelect={searchSelect} />}
-    inspector={<Inspector node={selectedNode} edge={selectedEdge} pins={state.pins} comparison={comparison} witnesses={witnesses} busy={busy}
-      onPin={(id) => dispatch({ type: "pin", id })} onCompare={comparePins} onWitnesses={showWitnesses}
-      onCloseDetail={() => { setComparison(undefined); setWitnesses(undefined); }} />}>
+    controls={<GraphControls state={state} dispatch={dispatch} bootstrap={bootstrap} />}
+    inspector={<Inspector node={selectedNode} edge={selectedEdge} witnesses={witnesses} busy={busy}
+      onWitnesses={showWitnesses} onCloseDetail={() => setWitnesses(undefined)} />}>
     {data && <GraphHeader data={data} />}
     <div className="graph-stage" data-loading={busy}>
-      {data && <GraphCanvas data={data} mostUsed={state.mostUsed} selected={state.selected} selectedEdge={state.selectedEdge} pins={state.pins} search={state.search}
+      {data && <GraphCanvas data={data} mostUsed={state.mostUsed} selected={state.selected} selectedEdge={state.selectedEdge}
         theme={theme}
         onSelect={selectNode} onSelectEdge={(id) => dispatch({ type: "selectEdge", id })}
         onOpen={selectNode} onOpenEdge={openEdge} />}
