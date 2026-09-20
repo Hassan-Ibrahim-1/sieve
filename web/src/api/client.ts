@@ -1,4 +1,4 @@
-import type { Bootstrap, Comparison, GraphResponse, ProofResponse, SearchResponse, WitnessResponse } from "./types";
+import type { Bootstrap, Comparison, GraphResponse, SearchResponse, WitnessResponse } from "./types";
 import type { UiState } from "../app/state";
 
 async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -12,23 +12,11 @@ export const api = {
   bootstrap: (signal?: AbortSignal) => request<Bootstrap>("/api/ui/bootstrap", signal),
   graph(state: UiState, signal?: AbortSignal) {
     const query = new URLSearchParams({
-      mode: state.mode === "proof" ? "similarity" : state.mode,
-      level: state.level === "proof" ? "neighborhood" : state.level,
-      metric: state.metric,
-      limit: String(state.limit),
-      threshold: String(state.threshold),
-      depth: String(state.depth),
       includeTheorems: String(state.filters.includeTheorems),
       includeDefinitions: String(state.filters.includeDefinitions),
       includeTechnical: String(state.filters.includeTechnical),
     });
-    if (state.scope) query.set("scope", state.scope);
     return request<GraphResponse>(`/api/ui/graph?${query}`, signal);
-  },
-  proof(declaration: string, detail = "outline", path?: string, signal?: AbortSignal) {
-    const query = new URLSearchParams({ declaration, detail });
-    if (path) query.set("path", path);
-    return request<ProofResponse>(`/api/ui/proof?${query}`, signal);
   },
   compare(left: string, right: string, signal?: AbortSignal) {
     const query = new URLSearchParams({ left, right });

@@ -1,18 +1,17 @@
 import { SigmaContainer } from "@react-sigma/core";
 import { EdgeArrowProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
 import type { Settings } from "sigma/settings";
-import type { GraphResponse, Metric } from "../api/types";
+import type { GraphResponse } from "../api/types";
 import type { Theme } from "../theme/useTheme";
 import { GraphRenderer } from "./GraphRenderer";
 
 interface Props {
   data: GraphResponse;
-  metric: Metric;
+  mostUsed: boolean;
   selected?: string;
   selectedEdge?: string;
   pins: string[];
   search: string;
-  layout: "force" | "layered" | "clustered";
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;

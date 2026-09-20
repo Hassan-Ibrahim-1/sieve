@@ -1,7 +1,7 @@
-import type { GraphNode, Metric } from "../api/types";
+import type { GraphNode } from "../api/types";
 
 export const palette = {
-  family: "#20a978",
+  group: "#20a978",
   theorem: "#20a978",
   definition: "#7182ee",
   proof: "#d18d45",
@@ -12,13 +12,18 @@ export const palette = {
 
 export function nodeColor(node: GraphNode) {
   if (node.technical) return palette.technical;
-  if (node.nodeKind === "proofStep" || node.nodeKind === "rawProofStep") return palette.proof;
-  if (node.nodeKind === "family") return palette.family;
+  if (node.nodeKind === "group") return palette.group;
   return node.declarationKind === "theorem" ? palette.theorem : palette.definition;
 }
 
-export function nodeSize(node: GraphNode, metric: Metric, maximum: number) {
-  const value = Math.max(0, node.metrics[metric] ?? node.metrics.recommended ?? 1);
-  const normalized = maximum > 0 ? Math.sqrt(value / maximum) : 0;
-  return 5 + normalized * (node.nodeKind === "family" ? 20 : 13);
+export function nodeSize(node: GraphNode, mostUsed: boolean, maximum: number) {
+  if (node.nodeKind === "group") {
+    const packingRadius = 24 + Math.ceil(Math.sqrt(node.memberCount)) * 11;
+    if (!mostUsed) return packingRadius;
+    const normalized = maximum > 0 ? Math.sqrt((node.metrics.directDependents ?? 0) / maximum) : 0;
+    return packingRadius + normalized * 24;
+  }
+  if (!mostUsed) return 7;
+  const normalized = maximum > 0 ? Math.sqrt((node.metrics.directDependents ?? 0) / maximum) : 0;
+  return 6 + normalized * 15;
 }

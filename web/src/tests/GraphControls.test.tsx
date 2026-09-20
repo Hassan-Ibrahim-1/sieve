@@ -4,23 +4,18 @@ import { GraphControls } from "../controls/GraphControls";
 import { initialState } from "../app/state";
 
 describe("GraphControls", () => {
-  it("shows only the active mode-specific control", () => {
+  it("uses a single graph with an optional most-used emphasis", () => {
     render(<GraphControls state={initialState} dispatch={vi.fn()} onSearchSelect={vi.fn()} />);
-    expect(screen.getByRole("combobox", { name: "Graph mode" })).toHaveValue("similarity");
-    expect(screen.getByRole("slider", { name: "Similarity threshold" })).toBeInTheDocument();
-    expect(screen.queryByRole("slider", { name: "Neighborhood depth" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Proof steps" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Emphasize most used" })).not.toBeChecked();
+    expect(screen.queryByRole("combobox", { name: "Graph mode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "Visible nodes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Proof steps")).not.toBeInTheDocument();
   });
 
-  it("offers proof mode after a theorem makes it available", () => {
-    render(<GraphControls state={{ ...initialState, proofDeclaration: "decl:a" }} dispatch={vi.fn()} onSearchSelect={vi.fn()} />);
-    expect(screen.getByRole("option", { name: "Proof steps" })).toBeInTheDocument();
-  });
-
-  it("changes graph mode through the select", () => {
+  it("toggles most-used emphasis", () => {
     const dispatch = vi.fn();
     render(<GraphControls state={initialState} dispatch={dispatch} onSearchSelect={vi.fn()} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Graph mode" }), { target: { value: "influence" } });
-    expect(dispatch).toHaveBeenCalledWith({ type: "mode", mode: "influence" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Emphasize most used" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "patch", value: { mostUsed: true } });
   });
 });

@@ -203,12 +203,13 @@ cargo run -- --import "$FTC" serve
 ```
 
 After Sieve extracts and indexes the selected modules, open
-`http://127.0.0.1:4173`. The graph-first application opens on a bounded map of
-statement families. Expand a family to inspect theorem variants, open a theorem
-neighborhood, compare two pinned statements, trace downstream use, inspect
-connection witnesses, or enter an extracted proof outline. Declaration details,
-dependency links, structural comparisons, and proof paths all come from the
-in-process Rust analysis rather than fixture data.
+`http://127.0.0.1:4173`. The graph-first application opens on one combined map
+of dependencies and equivalent statements. Exact and alpha-equivalent
+declarations of the same kind remain individually selectable inside translucent
+groups, while dependency arrows attach to the group as a whole. The optional
+“Most used” emphasis sizes declarations and groups by unique direct dependents.
+Declaration details, structural comparisons, and connection witnesses all come
+from the in-process Rust analysis rather than fixture data.
 To use another port, add `--port 8080`.
 
 The production client is built into `web/dist`:

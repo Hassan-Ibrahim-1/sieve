@@ -96,6 +96,8 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--accent); }
 .graph-header nav button:disabled { color: var(--text); cursor: default; }
 .visible-count { display: flex; align-items: baseline; gap: 6px; color: var(--faint); font: 10px ui-monospace, "SFMono-Regular", Consolas, monospace; }
 .visible-count strong { color: var(--text); font-size: 12px; }
+.visible-count strong:not(:first-child) { margin-left: 9px; }
+.graph-title { color: var(--muted); font-size: 11px; font-weight: 500; }
 .graph-stage { min-height: 0; position: relative; }
 .graph-stage[data-loading="true"] .graph-canvas { opacity: .72; }
 .graph-canvas, .react-sigma, .sigma-container { position: absolute; inset: 0; transition: opacity .18s; }
@@ -121,6 +123,8 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--accent); }
 .facts { margin: 24px 0; border-top: 1px solid var(--line); }
 .fact { min-height: 39px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 .fact strong { color: var(--text); font: 12px "IBM Plex Mono", monospace; }
+.group-members { max-height: 190px; margin: -10px 0 22px; display: grid; gap: 4px; overflow-y: auto; }
+.group-members code { padding: 6px 7px; border-radius: 5px; background: var(--surface-muted); color: var(--muted); font: 9px "IBM Plex Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pin-button { width: 100%; display: flex; justify-content: space-between; border: 1px solid var(--line-strong); border-radius: 7px; padding: 9px 10px; margin-bottom: 9px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
 .pin-button[data-active="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .pin-button kbd { font: 10px "IBM Plex Mono", monospace; }
@@ -171,4 +175,5 @@ input[type="range"] { width: 100%; height: 3px; accent-color: var(--accent); }
 @media (max-width: 460px) {
   .workspace { grid-template-columns: 1fr; }
   .sidebar { display: none; }
+  .graph-title { display: none; }
 }

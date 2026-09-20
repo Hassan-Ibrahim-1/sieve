@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import { MultiDirectedGraph } from "graphology";
-import type { GraphResponse, Metric } from "../api/types";
+import type { GraphNode, GraphResponse } from "../api/types";
 import type { Theme } from "../theme/useTheme";
 import { nodeColor, nodeSize, palette } from "./graphStyles";
 
@@ -10,12 +10,11 @@ const cameraCache = new Map<string, { x: number; y: number; angle: number; ratio
 
 interface Props {
   data: GraphResponse;
-  metric: Metric;
+  mostUsed: boolean;
   selected?: string;
   selectedEdge?: string;
   pins: string[];
   search: string;
-  layout: "force" | "layered" | "clustered";
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;
@@ -24,12 +23,16 @@ interface Props {
 }
 
 export function GraphRenderer(props: Props) {
-  const { data, metric, selected, selectedEdge, pins, search, layout, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
+  const { data, mostUsed, selected, selectedEdge, pins, search, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
   const loadGraph = useLoadGraph();
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
-  const layoutKey = `${data.corpusFingerprint}:${layout}:${data.scope.level}:${data.scope.id ?? "root"}`;
-  const maximum = useMemo(() => Math.max(1, ...data.nodes.map((node) => node.metrics[metric] ?? node.metrics.recommended ?? 1)), [data.nodes, metric]);
+  const nodeSignature = useMemo(() => data.nodes.map((node) => node.id).join("|"), [data.nodes]);
+  const layoutKey = `${data.corpusFingerprint}:${mostUsed ? "usage" : "default"}:${nodeSignature}`;
+  const maximum = useMemo(
+    () => Math.max(1, ...data.nodes.map((node) => node.metrics.directDependents ?? 0)),
+    [data.nodes],
+  );
 
   useEffect(() => {
     const graph = new MultiDirectedGraph();
@@ -39,11 +42,12 @@ export function GraphRenderer(props: Props) {
       graph.addNode(node.id, {
         x: position.x,
         y: position.y,
-        size: nodeSize(node, metric, maximum),
-        label: compactGraphLabel(node.displayStatement, node.nodeKind === "family" ? 46 : 38),
+        size: nodeSize(node, mostUsed, maximum),
+        label: compactGraphLabel(node.displayStatement, node.nodeKind === "group" ? 46 : 38),
         labelTheme: theme,
-        color: nodeColor(node),
+        color: node.nodeKind === "group" ? groupMaskColor(theme) : nodeColor(node),
         nodeKind: node.nodeKind,
+        zIndex: node.nodeKind === "group" ? 0 : 1,
       });
     }
     for (const edge of data.edges) {
@@ -51,20 +55,22 @@ export function GraphRenderer(props: Props) {
       graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
         size: Math.min(4, 0.45 + Math.log2(edge.aggregateCount + 1) * 0.55),
         color: palette.edge,
-        type: edge.directed ? "arrow" : "line",
+        type: "arrow",
       });
     }
     loadGraph(graph);
     if (!cached && data.nodes.length > 1) {
       const worker = new Worker(new URL("./LayoutWorker.ts", import.meta.url), { type: "module" });
       worker.postMessage({
-        kind: layout,
+        kind: "grouped-force",
+        mostUsed,
         nodes: data.nodes.map((node) => ({
           id: node.id,
           ...node.position,
-          familyId: node.familyId,
-          size: nodeSize(node, metric, maximum),
-          width: Math.min(260, 48 + node.displayStatement.length * 3.8),
+          groupId: node.groupId,
+          nodeKind: node.nodeKind,
+          size: nodeSize(node, mostUsed, maximum),
+          usage: node.metrics.directDependents ?? 0,
         })),
         edges: data.edges,
       });
@@ -79,26 +85,15 @@ export function GraphRenderer(props: Props) {
       };
       return () => worker.terminate();
     }
-  }, [data, layout, layoutKey, loadGraph, maximum, metric, sigma]);
+  }, [data, layoutKey, loadGraph, maximum, mostUsed, sigma, theme]);
 
   useEffect(() => {
-    const layerId = "family-rings";
+    const layerId = "equivalence-groups";
     if (sigma.getCanvases()[layerId]) sigma.killLayer(layerId);
-    if (data.scope.level !== "corpus") return;
+    const groups = data.nodes.filter((node) => node.nodeKind === "group");
+    if (groups.length === 0) return;
 
-    const families = new Map<string, string[]>();
-    for (const node of data.nodes) {
-      if (!node.familyId) continue;
-      const members = families.get(node.familyId) ?? [];
-      members.push(node.id);
-      families.set(node.familyId, members);
-    }
-    if (families.size === 0) return;
-
-    const canvas = sigma.createCanvas(layerId, {
-      beforeLayer: "edges",
-      style: { pointerEvents: "none" },
-    });
+    const canvas = sigma.createCanvas(layerId, { beforeLayer: "labels", style: { pointerEvents: "none" } });
     const context = canvas.getContext("2d");
     if (!context) return () => sigma.killLayer(layerId);
 
@@ -115,27 +110,16 @@ export function GraphRenderer(props: Props) {
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-
-      for (const members of families.values()) {
-        const points = members
-          .map((id) => sigma.getNodeDisplayData(id))
-          .filter((point): point is NonNullable<typeof point> => !!point);
-        if (points.length === 0) continue;
-        const centerX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
-        const centerY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
-        const radius = Math.max(
-          28,
-          ...points.map((point) => Math.hypot(point.x - centerX, point.y - centerY) + point.size + 18),
-        );
+      for (const group of groups) {
+        const point = sigma.getNodeDisplayData(group.id);
+        if (!point) continue;
         context.beginPath();
-        context.arc(centerX, centerY, radius, 0, Math.PI * 2);
-        context.fillStyle = theme === "dark" ? "rgba(66, 199, 147, .045)" : "rgba(24, 128, 92, .035)";
+        context.arc(point.x, point.y, point.size, 0, Math.PI * 2);
+        context.fillStyle = theme === "dark" ? "rgba(66, 199, 147, .075)" : "rgba(24, 128, 92, .065)";
         context.fill();
-        context.strokeStyle = theme === "dark" ? "rgba(98, 219, 171, .42)" : "rgba(20, 112, 81, .34)";
-        context.lineWidth = 1.5;
-        context.setLineDash([5, 5]);
+        context.strokeStyle = theme === "dark" ? "rgba(98, 219, 171, .5)" : "rgba(20, 112, 81, .42)";
+        context.lineWidth = group.id === selected ? 2.5 : 1.5;
         context.stroke();
-        context.setLineDash([]);
       }
     };
 
@@ -145,7 +129,7 @@ export function GraphRenderer(props: Props) {
       sigma.off("afterRender", draw);
       if (sigma.getCanvases()[layerId]) sigma.killLayer(layerId);
     };
-  }, [data.nodes, data.scope.level, sigma, theme]);
+  }, [data.nodes, selected, sigma, theme]);
 
   useEffect(() => registerEvents({
     clickNode: ({ node }) => onSelect(node),
@@ -158,38 +142,65 @@ export function GraphRenderer(props: Props) {
   useEffect(() => {
     const saved = cameraCache.get(layoutKey);
     if (saved) sigma.getCamera().setState(saved);
-    return () => {
-      cameraCache.set(layoutKey, sigma.getCamera().getState());
-    };
+    return () => { cameraCache.set(layoutKey, sigma.getCamera().getState()); };
   }, [layoutKey, sigma]);
 
   useEffect(() => {
+    if (!selected || !sigma.getGraph().hasNode(selected)) return;
+    const position = sigma.getNodeDisplayData(selected);
+    if (position) sigma.getCamera().animate(position, { duration: 300 });
+  }, [selected, sigma]);
+
+  useEffect(() => {
     const normalized = search.trim().toLowerCase();
+    const byId = new Map(data.nodes.map((node) => [node.id, node]));
+    const matchingGroups = new Set(data.nodes
+      .filter((node) => node.nodeKind === "declaration" && node.groupId && matches(node, normalized))
+      .map((node) => node.groupId!));
     const topLabels = new Set(data.nodes
-      .slice().sort((a, b) => (b.metrics[metric] ?? 0) - (a.metrics[metric] ?? 0)).slice(0, 3).map((node) => node.id));
+      .filter((node) => node.nodeKind === "declaration")
+      .slice().sort((a, b) => (b.metrics.directDependents ?? 0) - (a.metrics.directDependents ?? 0))
+      .slice(0, 5).map((node) => node.id));
+    const selectedNode = selected ? byId.get(selected) : undefined;
+    const selectedEndpoint = selectedNode?.groupId ?? selected;
     sigma.setSetting("nodeReducer", (node, attributes) => {
-      const source = data.nodes.find((item) => item.id === node);
-      const match = !normalized || !!source && `${source.statement} ${source.leanName ?? ""}`.toLowerCase().includes(normalized);
+      const source = byId.get(node);
+      const match = !normalized || !!source && (
+        matches(source, normalized)
+        || matchingGroups.has(source.id)
+        || !!source.groupId && matchingGroups.has(source.groupId)
+      );
       const graph = sigma.getGraph();
-      const relevant = !selected || !graph.hasNode(selected) || node === selected || graph.neighbors(selected).includes(node);
+      const sameGroup = selectedNode?.nodeKind === "group"
+        ? source?.groupId === selectedNode.id
+        : !!selectedNode?.groupId && (source?.groupId === selectedNode.groupId || source?.id === selectedNode.groupId);
+      const relevant = !selectedEndpoint || !graph.hasNode(selectedEndpoint) || node === selectedEndpoint || sameGroup || graph.neighbors(selectedEndpoint).includes(node);
       return {
         ...attributes,
-        color: !match || !relevant ? "#9aa29f" : attributes.color,
+        color: source?.nodeKind === "group" ? groupMaskColor(theme) : !match || !relevant ? "#9aa29f" : attributes.color,
         hidden: false,
         highlighted: node === selected || pins.includes(node),
-        forceLabel: source?.nodeKind === "family" || node === selected || pins.includes(node) || topLabels.has(node),
+        forceLabel: node === selected || pins.includes(node) || topLabels.has(node),
         labelTheme: theme,
-        zIndex: node === selected || pins.includes(node) ? 2 : 1,
+        zIndex: node === selected || pins.includes(node) ? 3 : source?.nodeKind === "group" ? 0 : 1,
       };
     });
     sigma.setSetting("edgeReducer", (edge, attributes) => {
       const extremities = sigma.getGraph().extremities(edge);
-      const relevant = !selected || extremities.includes(selected);
+      const relevant = !selectedEndpoint || extremities.includes(selectedEndpoint);
       return { ...attributes, hidden: !relevant, color: edge === selectedEdge ? palette.accent : attributes.color, size: edge === selectedEdge ? 3 : attributes.size };
     });
     sigma.refresh();
-  }, [data.nodes, metric, pins, search, selected, selectedEdge, sigma, theme]);
+  }, [data.nodes, pins, search, selected, selectedEdge, sigma, theme]);
   return null;
+}
+
+function matches(node: GraphNode, normalized: string) {
+  return !normalized || `${node.statement} ${node.leanName ?? ""}`.toLowerCase().includes(normalized);
+}
+
+function groupMaskColor(theme: Theme) {
+  return theme === "dark" ? "#0b0e0d" : "#f3f5f2";
 }
 
 export function compactGraphLabel(value: string, maximum = 38) {

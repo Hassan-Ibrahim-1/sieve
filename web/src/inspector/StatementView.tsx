@@ -11,7 +11,6 @@ export function StatementView({ node }: { node: GraphNode }) {
 }
 
 function formatKind(node: GraphNode) {
-  if (node.nodeKind === "family") return "Statement family";
-  if (node.nodeKind === "proofStep" || node.nodeKind === "rawProofStep") return node.declarationKind ?? "Proof step";
+  if (node.nodeKind === "group") return "Equivalent statements";
   return node.declarationKind ?? "Declaration";
 }

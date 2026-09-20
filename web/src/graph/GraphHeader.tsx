@@ -1,13 +1,12 @@
-import type { Breadcrumb, GraphResponse } from "../api/types";
+import type { GraphResponse } from "../api/types";
 
-export function GraphHeader({ data, onNavigate }: { data: GraphResponse; onNavigate: (crumb: Breadcrumb) => void }) {
+export function GraphHeader({ data }: { data: GraphResponse }) {
   return <div className="graph-header">
-    <nav aria-label="Graph location">
-      {data.scope.breadcrumbs.map((crumb, index) => <span key={`${crumb.level}:${crumb.id ?? "root"}`}>
-        {index > 0 && <i>/</i>}
-        <button disabled={index === data.scope.breadcrumbs.length - 1} onClick={() => onNavigate(crumb)}>{crumb.label}</button>
-      </span>)}
-    </nav>
-    <div className="visible-count"><strong>{data.totals.returned.toLocaleString()}</strong><span>/</span>{data.totals.matching.toLocaleString()}</div>
+    <strong className="graph-title">Dependencies and equivalent statements</strong>
+    <div className="visible-count">
+      <strong>{data.totals.declarations.toLocaleString()}</strong><span>declarations</span>
+      <strong>{data.totals.groups.toLocaleString()}</strong><span>groups</span>
+      <strong>{data.totals.connections.toLocaleString()}</strong><span>connections</span>
+    </div>
   </div>;
 }

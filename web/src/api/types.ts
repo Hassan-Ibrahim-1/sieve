@@ -1,7 +1,3 @@
-export type GraphMode = "similarity" | "influence" | "connections" | "proof";
-export type GraphLevel = "corpus" | "family" | "neighborhood" | "proof";
-export type Metric = "recommended" | "familySize" | "directDependents" | "reachableDependents" | "bridgeEvidence" | "proofSize";
-
 export interface UiFilters {
   includeTheorems: boolean;
   includeDefinitions: boolean;
@@ -13,25 +9,22 @@ export interface Bootstrap {
   corpusFingerprint: string;
   declarationCount: number;
   theoremCount: number;
-  graphModes: GraphMode[];
-  nodeSizeMetrics: Metric[];
   defaultFilters: UiFilters;
-  proofStepsAvailable: boolean;
 }
 
-export interface Breadcrumb { level: GraphLevel; id?: string; label: string }
 export interface GraphPosition { x: number; y: number }
 
 export interface GraphNode {
   id: string;
-  nodeKind: "family" | "declaration" | "proofStep" | "rawProofStep" | "collapsedPath";
+  nodeKind: "group" | "declaration";
   declarationKind?: string;
   statement: string;
   displayStatement: string;
   leanName?: string;
-  familyId?: string;
+  groupId?: string;
   memberCount: number;
-  metrics: Record<Metric | string, number>;
+  memberIds: string[];
+  metrics: Record<string, number>;
   generated: boolean;
   technical: boolean;
   position: GraphPosition;
@@ -42,30 +35,21 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  kind: "similarity" | "dependency" | "aggregate" | "condensedProofPath";
-  directed: boolean;
+  kind: "dependency";
+  directed: true;
   weight: number;
   aggregateCount: number;
-  similarity?: number;
+  statementCount: number;
+  proofCount: number;
   witnessAvailable: boolean;
-  collapsedStepCount?: number;
 }
 
 export interface GraphResponse {
   schemaVersion: number;
   corpusFingerprint: string;
-  scope: { level: GraphLevel; id?: string; breadcrumbs: Breadcrumb[] };
-  totals: { matching: number; returned: number; truncated: boolean };
+  totals: { declarations: number; groups: number; connections: number };
   nodes: GraphNode[];
   edges: GraphEdge[];
-}
-
-export interface ProofResponse {
-  declaration: string;
-  complete: boolean;
-  truncationReason?: string;
-  conclusionStep?: number;
-  graph: GraphResponse;
 }
 
 export interface SimilarityComponents {

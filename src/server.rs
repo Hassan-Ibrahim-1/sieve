@@ -77,14 +77,6 @@ struct CommonQuery {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct UiGraphQuery {
-    mode: Option<String>,
-    level: Option<String>,
-    scope: Option<String>,
-    metric: Option<String>,
-    limit: Option<usize>,
-    threshold: Option<f64>,
-    depth: Option<usize>,
-    search: Option<String>,
     include_theorems: Option<bool>,
     include_definitions: Option<bool>,
     include_technical: Option<bool>,
@@ -119,13 +111,6 @@ struct PathQuery {
     target: String,
     limit: Option<usize>,
     max_depth: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct ProofQuery {
-    declaration: String,
-    detail: Option<String>,
-    path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -219,7 +204,6 @@ async fn serve_async(state: AppState, port: u16) -> Result<()> {
         .route("/path", get(path_route))
         .route("/ui/bootstrap", get(ui_bootstrap))
         .route("/ui/graph", get(ui_graph))
-        .route("/ui/proof", get(ui_proof))
         .route("/ui/search", get(ui_search))
         .route("/ui/compare", get(compare_route))
         .route("/ui/witnesses", get(ui_witnesses))
@@ -263,19 +247,7 @@ async fn ui_graph(
     State(state): State<AppState>,
     Query(query): Query<UiGraphQuery>,
 ) -> ApiResult<crate::ui::GraphResponse> {
-    let defaults = GraphRequest::default();
     let request = GraphRequest {
-        mode: query.mode.unwrap_or(defaults.mode),
-        level: query.level.unwrap_or(defaults.level),
-        scope: query.scope,
-        metric: query.metric.unwrap_or(defaults.metric),
-        limit: query.limit.unwrap_or(defaults.limit),
-        threshold: query
-            .threshold
-            .unwrap_or(defaults.threshold)
-            .clamp(0.55, 1.0),
-        depth: query.depth.unwrap_or(defaults.depth),
-        search: query.search,
         filters: UiFilters {
             include_theorems: query.include_theorems.unwrap_or(true),
             include_definitions: query.include_definitions.unwrap_or(true),
@@ -285,22 +257,6 @@ async fn ui_graph(
     state
         .ui
         .graph(&state.corpus, &request)
-        .map(Json)
-        .map_err(ApiError::bad_request)
-}
-
-async fn ui_proof(
-    State(state): State<AppState>,
-    Query(query): Query<ProofQuery>,
-) -> ApiResult<crate::ui::ProofResponse> {
-    state
-        .ui
-        .proof(
-            &state.corpus,
-            &query.declaration,
-            query.detail.as_deref().unwrap_or("outline"),
-            query.path.as_deref(),
-        )
         .map(Json)
         .map_err(ApiError::bad_request)
 }
@@ -532,8 +488,8 @@ mod tests {
     #[test]
     fn default_ui_query_maps_to_expected_request() {
         let query = UiGraphQuery::default();
-        let defaults = GraphRequest::default();
-        assert_eq!(query.mode.unwrap_or(defaults.mode), "similarity");
-        assert_eq!(query.limit.unwrap_or(defaults.limit), 80);
+        assert_eq!(query.include_theorems, None);
+        assert_eq!(query.include_definitions, None);
+        assert_eq!(query.include_technical, None);
     }
 }

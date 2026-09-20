@@ -1,10 +1,9 @@
-import type { Comparison, GraphEdge, GraphMode, GraphNode, WitnessResponse } from "../api/types";
+import type { Comparison, GraphEdge, GraphNode, WitnessResponse } from "../api/types";
 import { ComparisonView } from "./ComparisonView";
 import { StatementView } from "./StatementView";
 import { WitnessPathView } from "./WitnessPathView";
 
 interface Props {
-  mode: GraphMode;
   node?: GraphNode;
   edge?: GraphEdge;
   pins: string[];
@@ -12,10 +11,8 @@ interface Props {
   witnesses?: WitnessResponse;
   busy?: boolean;
   onPin: (id: string) => void;
-  onPrimary: (node: GraphNode) => void;
   onCompare: () => void;
   onWitnesses: (edge: GraphEdge) => void;
-  onOpenEdge: (edge: GraphEdge) => void;
   onCloseDetail: () => void;
 }
 
@@ -28,24 +25,22 @@ export function Inspector(props: Props) {
     {edge && <>
       <div className="kind-row"><span>{edge.kind}</span><code>{edge.aggregateCount} connection{edge.aggregateCount === 1 ? "" : "s"}</code></div>
       <div className="edge-route"><span>{edge.source}</span><i>→</i><span>{edge.target}</span></div>
-      {edge.similarity !== undefined && <Fact label="Similarity" value={`${Math.round(edge.similarity * 100)}%`} />}
+      {edge.statementCount > 0 && <Fact label="Statement references" value={String(edge.statementCount)} />}
+      {edge.proofCount > 0 && <Fact label="Proof references" value={String(edge.proofCount)} />}
       {edge.witnessAvailable && <button className="primary-action" onClick={() => props.onWitnesses(edge)}>Show witness paths <span>→</span></button>}
-      {!edge.witnessAvailable && edge.kind === "condensedProofPath" && (edge.collapsedStepCount ?? 0) > 0 &&
-        <button className="primary-action" onClick={() => props.onOpenEdge(edge)}>Expand {edge.collapsedStepCount} steps <span>→</span></button>}
     </>}
     {node && <>
       <StatementView node={node} />
       <div className="facts">
-        {node.nodeKind === "family" && <Fact label="Members" value={String(node.memberCount)} />}
+        {node.nodeKind === "group" && <Fact label="Equivalent declarations" value={String(node.memberCount)} />}
         {node.metrics.directDependents !== undefined && <Fact label="Direct dependents" value={String(node.metrics.directDependents)} />}
-        {node.metrics.reachableDependents !== undefined && <Fact label="Reachable" value={String(node.metrics.reachableDependents)} />}
-        {node.metrics.bridgeEvidence !== undefined && props.mode === "connections" && <Fact label="Bridge evidence" value={String(node.metrics.bridgeEvidence)} />}
       </div>
+      {node.nodeKind === "group" && <div className="group-members" aria-label="Equivalent declarations">
+        {node.memberIds.map((member) => <code key={member}>{member.replace(/^decl:/, "")}</code>)}
+      </div>}
       {node.nodeKind === "declaration" && <button className="pin-button" data-active={props.pins.includes(node.id)} onClick={() => props.onPin(node.id)}>
         <span>{props.pins.includes(node.id) ? "Pinned" : "Pin for comparison"}</span><kbd>{props.pins.length}/2</kbd>
       </button>}
-      {(node.nodeKind === "family" || node.nodeKind === "declaration") &&
-        <button className="primary-action" onClick={() => props.onPrimary(node)}>{primaryLabel(props.mode, node)} <span>→</span></button>}
       {props.pins.length === 2 && <button className="secondary-action" onClick={props.onCompare}>Compare pinned statements</button>}
     </>}
   </aside>;
@@ -62,10 +57,3 @@ function EmptyInspector({ pins, busy, onCompare }: { pins: string[]; busy?: bool
 }
 
 function Fact({ label, value }: { label: string; value: string }) { return <div className="fact"><span>{label}</span><strong>{value}</strong></div>; }
-function primaryLabel(mode: GraphMode, node: GraphNode) {
-  if (node.nodeKind === "family") return "Expand family";
-  if (mode === "similarity") return "Compare nearby statements";
-  if (mode === "influence") return "Trace downstream use";
-  if (mode === "connections") return "Show connections";
-  return "Inspect proof claim";
-}
