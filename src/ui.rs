@@ -321,42 +321,37 @@ impl UiIndex {
                 {
                     return None;
                 }
-                let representative = if visible.contains(&family.representative) {
-                    family.representative
-                } else {
-                    shortest_statement(corpus, &visible)
-                };
-                Some((family_index, visible, representative))
+                Some((family_index, visible))
             })
             .collect::<Vec<_>>();
-        candidates.sort_by(|(left, lm, _), (right, rm, _)| {
+        candidates.sort_by(|(left, lm), (right, rm)| {
             self.family_metric(*right, rm, &request.metric, &request.mode)
                 .total_cmp(&self.family_metric(*left, lm, &request.metric, &request.mode))
                 .then_with(|| self.families[*left].id.cmp(&self.families[*right].id))
         });
-        let matching = candidates.len();
-        candidates.truncate(limit);
-        let active = candidates
-            .iter()
-            .map(|(id, _, _)| *id)
-            .collect::<BTreeSet<_>>();
-        let nodes = candidates
-            .iter()
-            .map(|(family_index, members, representative)| {
-                self.family_node(
-                    corpus,
-                    *family_index,
-                    members,
-                    *representative,
-                    &request.mode,
-                )
-            })
+        let matching = candidates.iter().map(|(_, members)| members.len()).sum();
+        let mut selected = Vec::with_capacity(limit);
+        for (_, mut members) in candidates {
+            members.sort_by(|&left, &right| {
+                self.declaration_metric(right, &request.metric, &request.mode)
+                    .total_cmp(&self.declaration_metric(left, &request.metric, &request.mode))
+                    .then_with(|| {
+                        corpus.declarations()[left]
+                            .name
+                            .cmp(&corpus.declarations()[right].name)
+                    })
+            });
+            selected.extend(members.into_iter().take(limit - selected.len()));
+            if selected.len() == limit {
+                break;
+            }
+        }
+        let active = selected.iter().copied().collect::<BTreeSet<_>>();
+        let nodes = selected
+            .into_iter()
+            .map(|id| self.declaration_node(corpus, id))
             .collect::<Vec<_>>();
-        let edges = if request.mode == "similarity" {
-            self.aggregate_similarity_edges(&active, request.threshold)
-        } else {
-            self.aggregate_dependency_edges(corpus, &active, request.mode == "connections")
-        };
+        let edges = self.declaration_edges(corpus, request, &active);
         response(
             &self.fingerprint,
             GraphScope {
@@ -522,74 +517,6 @@ impl UiIndex {
         ))
     }
 
-    fn family_node(
-        &self,
-        corpus: &AnalysisCorpus,
-        family_index: usize,
-        members: &[usize],
-        representative: usize,
-        mode: &str,
-    ) -> GraphNode {
-        let family = &self.families[family_index];
-        let declaration = &corpus.declarations()[representative];
-        let mut metrics = BTreeMap::new();
-        metrics.insert("familySize".into(), members.len() as f64);
-        metrics.insert(
-            "directDependents".into(),
-            members
-                .iter()
-                .map(|&id| self.direct_dependents[id])
-                .sum::<usize>() as f64,
-        );
-        metrics.insert(
-            "reachableDependents".into(),
-            members
-                .iter()
-                .map(|&id| self.reachable_dependents[id])
-                .max()
-                .unwrap_or(0) as f64,
-        );
-        metrics.insert(
-            "bridgeEvidence".into(),
-            members
-                .iter()
-                .map(|&id| self.bridge_evidence[id])
-                .sum::<f64>(),
-        );
-        metrics.insert(
-            "proofSize".into(),
-            members
-                .iter()
-                .filter_map(|&id| corpus.declarations()[id].value_stats.as_ref())
-                .map(|stats| stats.nodes)
-                .max()
-                .unwrap_or(0) as f64,
-        );
-        metrics.insert(
-            "recommended".into(),
-            match mode {
-                "influence" => metrics["reachableDependents"],
-                "connections" => metrics["bridgeEvidence"],
-                _ => metrics["familySize"],
-            },
-        );
-        GraphNode {
-            id: family.id.clone(),
-            node_kind: "family".into(),
-            declaration_kind: None,
-            statement: declaration.r#type.clone(),
-            display_statement: format!("{} · {}", concise(&declaration.r#type, 60), members.len()),
-            lean_name: None,
-            family_id: Some(family.id.clone()),
-            member_count: members.len(),
-            metrics,
-            generated: false,
-            technical: false,
-            position: stable_position(&family.id),
-            actions: vec!["expand".into()],
-        }
-    }
-
     fn declaration_node(&self, corpus: &AnalysisCorpus, id: usize) -> GraphNode {
         let declaration = &corpus.declarations()[id];
         let family = &self.families[self.family_by_declaration[id]];
@@ -669,89 +596,6 @@ impl UiIndex {
             _ if mode == "connections" => self.bridge_evidence[id],
             _ => self.reachable_dependents[id] as f64,
         }
-    }
-
-    fn aggregate_similarity_edges(
-        &self,
-        active: &BTreeSet<usize>,
-        threshold: f64,
-    ) -> Vec<GraphEdge> {
-        let mut aggregate = BTreeMap::<(usize, usize), (usize, f64, f64)>::new();
-        for edge in &self.similarities {
-            if edge.score < threshold.max(MIN_SIMILARITY) {
-                continue;
-            }
-            let mut left = self.family_by_declaration[edge.left];
-            let mut right = self.family_by_declaration[edge.right];
-            if left == right || !active.contains(&left) || !active.contains(&right) {
-                continue;
-            }
-            if left > right {
-                std::mem::swap(&mut left, &mut right);
-            }
-            let entry = aggregate.entry((left, right)).or_default();
-            entry.0 += 1;
-            entry.1 += edge.score;
-            entry.2 = entry.2.max(edge.score);
-        }
-        aggregate
-            .into_iter()
-            .map(|((left, right), (count, sum, maximum))| GraphEdge {
-                id: format!(
-                    "similarity-{}-{}",
-                    self.families[left].id, self.families[right].id
-                ),
-                source: self.families[left].id.clone(),
-                target: self.families[right].id.clone(),
-                kind: "aggregate".into(),
-                directed: false,
-                weight: maximum,
-                aggregate_count: count,
-                similarity: Some(sum / count as f64),
-                witness_available: false,
-                collapsed_step_count: None,
-            })
-            .collect()
-    }
-
-    fn aggregate_dependency_edges(
-        &self,
-        corpus: &AnalysisCorpus,
-        active: &BTreeSet<usize>,
-        witnesses: bool,
-    ) -> Vec<GraphEdge> {
-        let mut aggregate = BTreeMap::<(usize, usize), usize>::new();
-        for edge in corpus.edges().iter().filter(|edge| edge.target_in_corpus) {
-            let Some(target_id) = corpus.declaration_id(&edge.target) else {
-                continue;
-            };
-            let source_family = self.family_by_declaration[target_id]; // prerequisite
-            let target_family = self.family_by_declaration[edge.source]; // result
-            if source_family != target_family
-                && active.contains(&source_family)
-                && active.contains(&target_family)
-            {
-                *aggregate.entry((source_family, target_family)).or_default() += edge.occurrences;
-            }
-        }
-        aggregate
-            .into_iter()
-            .map(|((source, target), count)| GraphEdge {
-                id: format!(
-                    "dependency-{}-{}",
-                    self.families[source].id, self.families[target].id
-                ),
-                source: self.families[source].id.clone(),
-                target: self.families[target].id.clone(),
-                kind: "aggregate".into(),
-                directed: true,
-                weight: count as f64,
-                aggregate_count: count,
-                similarity: None,
-                witness_available: witnesses,
-                collapsed_step_count: None,
-            })
-            .collect()
     }
 
     fn declaration_edges(
@@ -1148,23 +992,6 @@ fn concise(statement: &str, maximum: usize) -> String {
         .collect::<String>();
     value.push('…');
     value
-}
-
-fn shortest_statement(corpus: &AnalysisCorpus, members: &[usize]) -> usize {
-    *members
-        .iter()
-        .min_by(|&&a, &&b| {
-            corpus.declarations()[a]
-                .r#type
-                .len()
-                .cmp(&corpus.declarations()[b].r#type.len())
-                .then_with(|| {
-                    corpus.declarations()[a]
-                        .name
-                        .cmp(&corpus.declarations()[b].name)
-                })
-        })
-        .expect("family is nonempty")
 }
 
 fn stable_position(value: &str) -> GraphPosition {
@@ -1676,6 +1503,30 @@ mod tests {
         assert!(graph.edges.iter().all(|edge| {
             ids.contains(edge.source.as_str()) && ids.contains(edge.target.as_str())
         }));
+    }
+
+    #[test]
+    fn corpus_graph_keeps_family_members_as_distinct_nodes() {
+        let corpus = fixture(30);
+        let index = UiIndex::build(&corpus);
+        let graph = index.graph(&corpus, &GraphRequest::default()).unwrap();
+
+        assert_eq!(graph.totals.matching, 24);
+        assert_eq!(graph.nodes.len(), 24);
+        assert!(graph.nodes.iter().all(|node| {
+            node.node_kind == "declaration"
+                && node.member_count == 1
+                && node.family_id.as_deref() == Some(index.families[0].id.as_str())
+        }));
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            graph.nodes.len()
+        );
     }
 
     #[test]

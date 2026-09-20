@@ -115,7 +115,7 @@ export function App() {
     <div className="graph-stage" data-loading={busy}>
       {data && <GraphCanvas data={data} metric={state.metric} selected={state.selected} selectedEdge={state.selectedEdge} pins={state.pins} search={state.search}
         theme={theme}
-        layout={state.mode === "similarity" || state.mode === "connections" ? "force" : "layered"}
+        layout={data.scope.level === "corpus" ? "clustered" : state.mode === "similarity" || state.mode === "connections" ? "force" : "layered"}
         onSelect={selectNode} onSelectEdge={(id) => dispatch({ type: "selectEdge", id })}
         onOpen={openNode} onOpenEdge={openEdge} />}
       {busy && !data && <div className="loading-state"><span className="loading-ring" /></div>}

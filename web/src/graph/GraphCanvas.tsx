@@ -12,7 +12,7 @@ interface Props {
   selectedEdge?: string;
   pins: string[];
   search: string;
-  layout: "force" | "layered";
+  layout: "force" | "layered" | "clustered";
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;

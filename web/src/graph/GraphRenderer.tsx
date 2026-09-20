@@ -15,7 +15,7 @@ interface Props {
   selectedEdge?: string;
   pins: string[];
   search: string;
-  layout: "force" | "layered";
+  layout: "force" | "layered" | "clustered";
   theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;
@@ -62,6 +62,7 @@ export function GraphRenderer(props: Props) {
         nodes: data.nodes.map((node) => ({
           id: node.id,
           ...node.position,
+          familyId: node.familyId,
           size: nodeSize(node, metric, maximum),
           width: Math.min(260, 48 + node.displayStatement.length * 3.8),
         })),
@@ -79,6 +80,72 @@ export function GraphRenderer(props: Props) {
       return () => worker.terminate();
     }
   }, [data, layout, layoutKey, loadGraph, maximum, metric, sigma]);
+
+  useEffect(() => {
+    const layerId = "family-rings";
+    if (sigma.getCanvases()[layerId]) sigma.killLayer(layerId);
+    if (data.scope.level !== "corpus") return;
+
+    const families = new Map<string, string[]>();
+    for (const node of data.nodes) {
+      if (!node.familyId) continue;
+      const members = families.get(node.familyId) ?? [];
+      members.push(node.id);
+      families.set(node.familyId, members);
+    }
+    if (families.size === 0) return;
+
+    const canvas = sigma.createCanvas(layerId, {
+      beforeLayer: "edges",
+      style: { pointerEvents: "none" },
+    });
+    const context = canvas.getContext("2d");
+    if (!context) return () => sigma.killLayer(layerId);
+
+    const draw = () => {
+      const { width, height } = sigma.getDimensions();
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const pixelWidth = Math.round(width * ratio);
+      const pixelHeight = Math.round(height * ratio);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+      }
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      for (const members of families.values()) {
+        const points = members
+          .map((id) => sigma.getNodeDisplayData(id))
+          .filter((point): point is NonNullable<typeof point> => !!point);
+        if (points.length === 0) continue;
+        const centerX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+        const centerY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+        const radius = Math.max(
+          28,
+          ...points.map((point) => Math.hypot(point.x - centerX, point.y - centerY) + point.size + 18),
+        );
+        context.beginPath();
+        context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        context.fillStyle = theme === "dark" ? "rgba(66, 199, 147, .045)" : "rgba(24, 128, 92, .035)";
+        context.fill();
+        context.strokeStyle = theme === "dark" ? "rgba(98, 219, 171, .42)" : "rgba(20, 112, 81, .34)";
+        context.lineWidth = 1.5;
+        context.setLineDash([5, 5]);
+        context.stroke();
+        context.setLineDash([]);
+      }
+    };
+
+    sigma.on("afterRender", draw);
+    draw();
+    return () => {
+      sigma.off("afterRender", draw);
+      if (sigma.getCanvases()[layerId]) sigma.killLayer(layerId);
+    };
+  }, [data.nodes, data.scope.level, sigma, theme]);
 
   useEffect(() => registerEvents({
     clickNode: ({ node }) => onSelect(node),

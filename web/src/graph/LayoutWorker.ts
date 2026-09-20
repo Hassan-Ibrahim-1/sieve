@@ -3,13 +3,67 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 
 interface LayoutRequest {
-  kind: "force" | "layered";
-  nodes: Array<{ id: string; x: number; y: number; size: number; width?: number }>;
+  kind: "force" | "layered" | "clustered";
+  nodes: Array<{ id: string; x: number; y: number; size: number; width?: number; familyId?: string }>;
   edges: Array<{ source: string; target: string }>;
 }
 
 self.onmessage = async (event: MessageEvent<LayoutRequest>) => {
   const payload = event.data;
+  if (payload.kind === "clustered") {
+    const groups = new Map<string, LayoutRequest["nodes"]>();
+    for (const node of payload.nodes) {
+      const key = node.familyId ?? node.id;
+      const members = groups.get(key) ?? [];
+      members.push(node);
+      groups.set(key, members);
+    }
+    const ordered = [...groups.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([familyId, members]) => [familyId, members.sort((left, right) => left.id.localeCompare(right.id))] as const);
+    const outerRing = (count: number) => {
+      let ring = 0;
+      let capacity = 1;
+      while (count > capacity) {
+        ring += 1;
+        capacity += ring * 6;
+      }
+      return ring;
+    };
+    const largestRadius = Math.max(50, ...ordered.map(([, members]) => outerRing(members.length) * 52 + 42));
+    const spacing = largestRadius * 2 + 110;
+    const columns = Math.max(1, Math.ceil(Math.sqrt(ordered.length)));
+    const rows = Math.ceil(ordered.length / columns);
+    const positions: Record<string, { x: number; y: number }> = {};
+
+    ordered.forEach(([, members], groupIndex) => {
+      const column = groupIndex % columns;
+      const row = Math.floor(groupIndex / columns);
+      const centerX = (column - (columns - 1) / 2) * spacing;
+      const centerY = (row - (rows - 1) / 2) * spacing;
+      members.forEach((node, memberIndex) => {
+        if (memberIndex === 0) {
+          positions[node.id] = { x: centerX, y: centerY };
+          return;
+        }
+        let ring = 1;
+        let offset = memberIndex - 1;
+        while (offset >= ring * 6) {
+          offset -= ring * 6;
+          ring += 1;
+        }
+        const countOnRing = Math.min(ring * 6, members.length - (1 + 3 * (ring - 1) * ring));
+        const angle = -Math.PI / 2 + (offset / countOnRing) * Math.PI * 2;
+        positions[node.id] = {
+          x: centerX + Math.cos(angle) * ring * 52,
+          y: centerY + Math.sin(angle) * ring * 52,
+        };
+      });
+    });
+    self.postMessage(positions);
+    return;
+  }
+
   if (payload.kind === "layered") {
     const elk = new ELK();
     const result = await elk.layout({
