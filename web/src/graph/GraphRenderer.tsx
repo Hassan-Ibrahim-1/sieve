@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import { MultiDirectedGraph } from "graphology";
 import type { GraphResponse, Metric } from "../api/types";
+import type { Theme } from "../theme/useTheme";
 import { nodeColor, nodeSize, palette } from "./graphStyles";
 
 const layoutCache = new Map<string, Record<string, { x: number; y: number }>>();
@@ -15,6 +16,7 @@ interface Props {
   pins: string[];
   search: string;
   layout: "force" | "layered";
+  theme: Theme;
   onSelect: (id?: string) => void;
   onSelectEdge: (id?: string) => void;
   onOpen: (id: string) => void;
@@ -22,7 +24,7 @@ interface Props {
 }
 
 export function GraphRenderer(props: Props) {
-  const { data, metric, selected, selectedEdge, pins, search, layout, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
+  const { data, metric, selected, selectedEdge, pins, search, layout, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
   const loadGraph = useLoadGraph();
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
@@ -39,6 +41,7 @@ export function GraphRenderer(props: Props) {
         y: position.y,
         size: nodeSize(node, metric, maximum),
         label: compactGraphLabel(node.displayStatement, node.nodeKind === "family" ? 46 : 38),
+        labelTheme: theme,
         color: nodeColor(node),
         nodeKind: node.nodeKind,
       });
@@ -108,6 +111,7 @@ export function GraphRenderer(props: Props) {
         hidden: false,
         highlighted: node === selected || pins.includes(node),
         forceLabel: source?.nodeKind === "family" || node === selected || pins.includes(node) || topLabels.has(node),
+        labelTheme: theme,
         zIndex: node === selected || pins.includes(node) ? 2 : 1,
       };
     });
@@ -117,7 +121,7 @@ export function GraphRenderer(props: Props) {
       return { ...attributes, hidden: !relevant, color: edge === selectedEdge ? palette.accent : attributes.color, size: edge === selectedEdge ? 3 : attributes.size };
     });
     sigma.refresh();
-  }, [data.nodes, metric, pins, search, selected, selectedEdge, sigma]);
+  }, [data.nodes, metric, pins, search, selected, selectedEdge, sigma, theme]);
   return null;
 }
 
