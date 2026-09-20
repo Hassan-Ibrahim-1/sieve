@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+use std::sync::Arc;
 
 use sieve::analysis::corpus::AnalysisCorpus;
 use sieve::analysis::dependency::DependencyConfig;
@@ -66,7 +67,7 @@ fn warn_if_empty_corpus(snapshot: &ExtractionSnapshot, targets: &[String]) {
     }
 }
 
-fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
+fn run(cli: &Cli, corpus: &Arc<AnalysisCorpus>) -> Result<()> {
     match &cli.command {
         Command::Help => print!("{}", usage()),
         Command::Discover => {
@@ -219,7 +220,7 @@ fn run(cli: &Cli, corpus: &AnalysisCorpus) -> Result<()> {
             };
             print!("{output}");
         }
-        Command::Serve => server::serve(corpus, cli.port)?,
+        Command::Serve => server::serve(Arc::clone(corpus), cli.port)?,
         Command::LegacyDeclarations(names) => {
             let filter = AnalysisFilter::all();
             let summary = corpus.summary_with_histogram(&filter, &cli.histogram_buckets);
@@ -279,7 +280,7 @@ fn main() -> Result<()> {
     }
     let extraction = ExtractionConfig::new(&cli.project, cli.imports.clone())?;
     let targets = cli.extraction_targets();
-    let mut snapshot = if matches!(cli.command, Command::ProofSteps(_)) {
+    let mut snapshot = if matches!(cli.command, Command::ProofSteps(_) | Command::Serve) {
         extract_with_proof_steps(&extraction, &targets)?
     } else {
         extract(&extraction, &targets)?
@@ -304,7 +305,7 @@ fn main() -> Result<()> {
             full_declaration.proof_steps = Some(proof_steps);
         }
     }
-    let corpus = AnalysisCorpus::new(snapshot)?;
+    let corpus = Arc::new(AnalysisCorpus::new(snapshot)?);
     run(&cli, &corpus)
 }
 

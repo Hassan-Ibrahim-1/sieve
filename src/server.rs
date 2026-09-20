@@ -1,33 +1,145 @@
-use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use anyhow::{Context, Result};
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::get;
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use tower_http::compression::CompressionLayer;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::trace::TraceLayer;
 
 use crate::analysis::corpus::AnalysisCorpus;
 use crate::analysis::dependency::DependencyConfig;
 use crate::analysis::filters::{AnalysisFilter, DependencyLayer, LayerSelection};
 use crate::analysis::structure::{StructuralConfig, StructuralMode};
+use crate::ui::{GraphRequest, UiFilters, UiIndex};
 
-const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sieve API</title>
-  <style>
-    body { max-width: 48rem; margin: 4rem auto; padding: 0 1.5rem; font: 16px/1.5 system-ui, sans-serif; color: #1f2937; }
-    code { background: #f3f4f6; padding: .15rem .35rem; border-radius: .25rem; }
-  </style>
-</head>
-<body>
-  <h1>Sieve API</h1>
-  <p>The analysis server is running. Start with <a href="/api/health"><code>/api/health</code></a>
-  or <a href="/api/corpus"><code>/api/corpus</code></a>.</p>
-</body>
-</html>
-"#;
+const DEVELOPMENT_INDEX: &str = r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sieve</title><style>body{margin:4rem auto;max-width:42rem;padding:0 1.5rem;font:16px/1.5 system-ui;background:#111;color:#eee}code{color:#9de4c7}</style></head>
+<body><h1>Sieve</h1><p>The web build is missing. Run <code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code>, then restart the server.</p></body></html>"#;
+
+#[derive(Clone)]
+struct AppState {
+    corpus: Arc<AnalysisCorpus>,
+    ui: Arc<UiIndex>,
+}
+
+#[derive(Debug)]
+struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiError {
+    fn bad_request(error: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: error.to_string(),
+        }
+    }
+    fn not_found(error: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: error.to_string(),
+        }
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(serde_json::json!({ "error": self.message, "status": self.status.as_u16() })),
+        )
+            .into_response()
+    }
+}
+
+type ApiResult<T> = std::result::Result<Json<T>, ApiError>;
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CommonQuery {
+    include_generated: Option<bool>,
+    include_infrastructure: Option<bool>,
+    internal_only: Option<bool>,
+    source_backed_only: Option<bool>,
+    kind: Option<String>,
+    module: Option<String>,
+    layer: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct UiGraphQuery {
+    mode: Option<String>,
+    level: Option<String>,
+    scope: Option<String>,
+    metric: Option<String>,
+    limit: Option<usize>,
+    threshold: Option<f64>,
+    depth: Option<usize>,
+    search: Option<String>,
+    include_theorems: Option<bool>,
+    include_definitions: Option<bool>,
+    include_technical: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct NameQuery {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct CompareQuery {
+    left: String,
+    right: String,
+    layer: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepeatedQuery {
+    name: String,
+    limit: Option<usize>,
+    exact: Option<bool>,
+    minimum_size: Option<usize>,
+    minimum_support: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PathQuery {
+    source: String,
+    target: String,
+    limit: Option<usize>,
+    max_depth: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct ProofQuery {
+    declaration: String,
+    detail: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WitnessQuery {
+    source: String,
+    target: String,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    limit: Option<usize>,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,17 +168,17 @@ struct CorpusResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct DeclarationResponse<'a> {
-    name: &'a str,
-    kind: &'a str,
-    module: Option<&'a str>,
+struct DeclarationResponse {
+    name: String,
+    kind: String,
+    module: Option<String>,
     generated: bool,
     flags: DeclarationFlags,
-    documentation: Option<&'a str>,
-    source_range: Option<&'a crate::model::SourceRange>,
-    type_text: &'a str,
-    level_parameters: &'a [String],
-    axioms: &'a [String],
+    documentation: Option<String>,
+    source_range: Option<crate::model::SourceRange>,
+    type_text: String,
+    level_parameters: Vec<String>,
+    axioms: Vec<String>,
     metrics: crate::analysis::metrics::DeclarationMetrics,
     dependencies: crate::analysis::dependency::DependencySummary,
     dependents: crate::analysis::dependency::DependencySummary,
@@ -88,64 +200,295 @@ struct RepeatedForDeclaration {
     results: Vec<crate::analysis::structure::RepeatedSubexpression>,
 }
 
-pub fn serve(corpus: &AnalysisCorpus, port: u16) -> Result<()> {
+pub fn serve(corpus: Arc<AnalysisCorpus>, port: u16) -> Result<()> {
+    let ui = Arc::new(UiIndex::build(&corpus));
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create the UI runtime")?
+        .block_on(serve_async(AppState { corpus, ui }, port))
+}
+
+async fn serve_async(state: AppState, port: u16) -> Result<()> {
+    let api = Router::new()
+        .route("/health", get(health))
+        .route("/corpus", get(corpus_route))
+        .route("/declaration", get(declaration_route))
+        .route("/compare", get(compare_route))
+        .route("/repeated", get(repeated_route))
+        .route("/path", get(path_route))
+        .route("/ui/bootstrap", get(ui_bootstrap))
+        .route("/ui/graph", get(ui_graph))
+        .route("/ui/proof", get(ui_proof))
+        .route("/ui/search", get(ui_search))
+        .route("/ui/compare", get(compare_route))
+        .route("/ui/witnesses", get(ui_witnesses))
+        .fallback(api_not_found);
+    let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/dist");
+    let mut app = Router::new().nest("/api", api);
+    if dist.join("index.html").is_file() {
+        app = app.fallback_service(
+            ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
+        );
+    } else {
+        app = app.fallback(development_index);
+    }
+    let app = app
+        .with_state(state)
+        .layer(CompressionLayer::new())
+        .layer(TraceLayer::new_for_http());
     let address = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&address)
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await
         .with_context(|| format!("failed to bind the UI server to {address}"))?;
     println!("Sieve UI: http://{address}");
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                if let Err(error) = handle_request(&mut stream, corpus) {
-                    let _ = write_response(
-                        &mut stream,
-                        500,
-                        "application/json; charset=utf-8",
-                        &serde_json::json!({ "error": error.to_string() }).to_string(),
-                    );
-                }
-            }
-            Err(error) => eprintln!("UI connection failed: {error}"),
-        }
-    }
-    Ok(())
+    axum::serve(listener, app).await.context("UI server failed")
 }
 
-fn handle_request(stream: &mut TcpStream, corpus: &AnalysisCorpus) -> Result<()> {
-    let mut buffer = [0_u8; 16 * 1024];
-    let bytes = stream
-        .read(&mut buffer)
-        .context("failed to read HTTP request")?;
-    let request = std::str::from_utf8(&buffer[..bytes]).context("request was not UTF-8")?;
-    let first_line = request.lines().next().context("empty HTTP request")?;
-    let mut parts = first_line.split_whitespace();
-    let method = parts.next().context("missing HTTP method")?;
-    let target = parts.next().context("missing HTTP target")?;
-    if method != "GET" {
-        return write_response(
-            stream,
-            405,
-            "text/plain; charset=utf-8",
-            "Method not allowed",
-        );
-    }
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let query = parse_query(query)?;
-    match path {
-        "/" | "/index.html" => write_response(stream, 200, "text/html; charset=utf-8", INDEX_HTML),
-        "/api/corpus" => json_response(stream, &corpus_response(corpus, &query)),
-        "/api/declaration" => declaration_response(stream, corpus, &query),
-        "/api/compare" => comparison_response(stream, corpus, &query),
-        "/api/repeated" => repeated_response(stream, corpus, &query),
-        "/api/path" => path_response(stream, corpus, &query),
-        "/api/health" => json_response(stream, &serde_json::json!({ "status": "ok" })),
-        _ => write_response(stream, 404, "text/plain; charset=utf-8", "Not found"),
-    }
+async fn development_index() -> Html<&'static str> {
+    Html(DEVELOPMENT_INDEX)
+}
+async fn api_not_found() -> ApiError {
+    ApiError::not_found("API route not found")
+}
+async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "status": "ok" }))
 }
 
-fn corpus_response(corpus: &AnalysisCorpus, query: &BTreeMap<String, String>) -> CorpusResponse {
-    let filter = filter_from_query(query);
-    corpus_response_with_filter(corpus, &filter)
+async fn ui_bootstrap(State(state): State<AppState>) -> Json<crate::ui::UiBootstrap> {
+    Json(state.ui.bootstrap(&state.corpus))
+}
+
+async fn ui_graph(
+    State(state): State<AppState>,
+    Query(query): Query<UiGraphQuery>,
+) -> ApiResult<crate::ui::GraphResponse> {
+    let defaults = GraphRequest::default();
+    let request = GraphRequest {
+        mode: query.mode.unwrap_or(defaults.mode),
+        level: query.level.unwrap_or(defaults.level),
+        scope: query.scope,
+        metric: query.metric.unwrap_or(defaults.metric),
+        limit: query.limit.unwrap_or(defaults.limit),
+        threshold: query
+            .threshold
+            .unwrap_or(defaults.threshold)
+            .clamp(0.55, 1.0),
+        depth: query.depth.unwrap_or(defaults.depth),
+        search: query.search,
+        filters: UiFilters {
+            include_theorems: query.include_theorems.unwrap_or(true),
+            include_definitions: query.include_definitions.unwrap_or(true),
+            include_technical: query.include_technical.unwrap_or(false),
+        },
+    };
+    state
+        .ui
+        .graph(&state.corpus, &request)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn ui_proof(
+    State(state): State<AppState>,
+    Query(query): Query<ProofQuery>,
+) -> ApiResult<crate::ui::ProofResponse> {
+    state
+        .ui
+        .proof(
+            &state.corpus,
+            &query.declaration,
+            query.detail.as_deref().unwrap_or("outline"),
+            query.path.as_deref(),
+        )
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn ui_witnesses(
+    State(state): State<AppState>,
+    Query(query): Query<WitnessQuery>,
+) -> ApiResult<crate::ui::WitnessResponse> {
+    state
+        .ui
+        .witnesses(
+            &state.corpus,
+            &query.source,
+            &query.target,
+            query.limit.unwrap_or(3),
+        )
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn ui_search(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Json<crate::ui::SearchResponse> {
+    Json(
+        state
+            .ui
+            .search(&state.corpus, &query.q, query.limit.unwrap_or(12)),
+    )
+}
+
+async fn corpus_route(
+    State(state): State<AppState>,
+    Query(query): Query<CommonQuery>,
+) -> Json<CorpusResponse> {
+    Json(corpus_response_with_filter(
+        &state.corpus,
+        &filter_from_query(&query),
+    ))
+}
+
+async fn declaration_route(
+    State(state): State<AppState>,
+    Query(query): Query<NameQuery>,
+) -> ApiResult<DeclarationResponse> {
+    let declaration = state
+        .corpus
+        .declaration(&query.name)
+        .with_context(|| format!("unknown declaration {}", query.name))
+        .map_err(ApiError::not_found)?;
+    let config = DependencyConfig {
+        filter: AnalysisFilter::all(),
+        weighted: false,
+        max_depth: 32,
+        limit: 500,
+    };
+    Ok(Json(DeclarationResponse {
+        name: declaration.name.clone(),
+        kind: declaration.kind.clone(),
+        module: declaration.module_name.clone(),
+        generated: declaration.is_generated(),
+        flags: DeclarationFlags {
+            internal: declaration.is_internal,
+            private: declaration.is_private,
+            unsafe_declaration: declaration.is_unsafe,
+            partial: declaration.is_partial,
+        },
+        documentation: declaration.doc_string.clone(),
+        source_range: declaration.source_range.clone(),
+        type_text: declaration.r#type.clone(),
+        level_parameters: declaration.level_parameters.clone(),
+        axioms: declaration.axioms.clone(),
+        metrics: state.corpus.declaration_metrics(&query.name).unwrap(),
+        dependencies: state
+            .corpus
+            .direct_dependencies(&query.name, &config)
+            .unwrap(),
+        dependents: state
+            .corpus
+            .direct_dependents(&query.name, &config)
+            .unwrap(),
+    }))
+}
+
+async fn compare_route(
+    State(state): State<AppState>,
+    Query(query): Query<CompareQuery>,
+) -> ApiResult<Vec<crate::analysis::comparison::DeclarationComparison>> {
+    let layers = match query.layer.as_deref() {
+        Some("statement") => vec![DependencyLayer::Statement],
+        Some("proof") => vec![DependencyLayer::Proof],
+        _ => vec![DependencyLayer::Statement, DependencyLayer::Proof],
+    };
+    let results = layers
+        .into_iter()
+        .filter_map(|layer| {
+            state
+                .corpus
+                .compare_declarations(&query.left, &query.right, layer)
+        })
+        .collect::<Vec<_>>();
+    if results.is_empty() {
+        return Err(ApiError::bad_request(
+            "the selected layer is absent from one or both declarations",
+        ));
+    }
+    Ok(Json(results))
+}
+
+async fn repeated_route(
+    State(state): State<AppState>,
+    Query(query): Query<RepeatedQuery>,
+) -> ApiResult<RepeatedForDeclaration> {
+    state
+        .corpus
+        .declaration(&query.name)
+        .with_context(|| format!("unknown declaration {}", query.name))
+        .map_err(ApiError::not_found)?;
+    let filter = AnalysisFilter {
+        include_generated: true,
+        ..AnalysisFilter::default()
+    };
+    let config = StructuralConfig {
+        filter,
+        mode: if query.exact.unwrap_or(false) {
+            StructuralMode::Exact
+        } else {
+            StructuralMode::AlphaEquivalent
+        },
+        minimum_size: query.minimum_size.unwrap_or(20),
+        minimum_support: query.minimum_support.unwrap_or(2),
+        limit: 2_000,
+    };
+    let results = state
+        .corpus
+        .repeated_subexpressions(&config)
+        .into_iter()
+        .filter(|result| {
+            result
+                .locations
+                .iter()
+                .any(|location| location.declaration == query.name)
+        })
+        .take(query.limit.unwrap_or(20))
+        .collect();
+    Ok(Json(RepeatedForDeclaration {
+        declaration: query.name,
+        results,
+    }))
+}
+
+async fn path_route(
+    State(state): State<AppState>,
+    Query(query): Query<PathQuery>,
+) -> ApiResult<crate::analysis::dependency::DependencyPath> {
+    let config = DependencyConfig {
+        filter: AnalysisFilter::all(),
+        weighted: false,
+        max_depth: query.max_depth.unwrap_or(32),
+        limit: query.limit.unwrap_or(500),
+    };
+    state
+        .corpus
+        .shortest_dependency_path(&query.source, &query.target, &config)
+        .with_context(|| {
+            format!(
+                "no dependency path from {} to {}",
+                query.source, query.target
+            )
+        })
+        .map(Json)
+        .map_err(ApiError::not_found)
+}
+
+fn filter_from_query(query: &CommonQuery) -> AnalysisFilter {
+    AnalysisFilter {
+        include_generated: query.include_generated.unwrap_or(false),
+        include_infrastructure: query.include_infrastructure.unwrap_or(false),
+        internal_only: query.internal_only.unwrap_or(false),
+        source_backed_only: query.source_backed_only.unwrap_or(false),
+        declaration_kind: query.kind.clone().filter(|value| !value.is_empty()),
+        module: query.module.clone().filter(|value| !value.is_empty()),
+        layer: match query.layer.as_deref() {
+            Some("statement") => LayerSelection::Statement,
+            Some("proof") => LayerSelection::Proof,
+            _ => LayerSelection::Both,
+        },
+    }
 }
 
 fn corpus_response_with_filter(corpus: &AnalysisCorpus, filter: &AnalysisFilter) -> CorpusResponse {
@@ -183,252 +526,14 @@ pub fn corpus_json(corpus: &AnalysisCorpus, filter: &AnalysisFilter) -> Result<S
     ))?)
 }
 
-fn declaration_response(
-    stream: &mut TcpStream,
-    corpus: &AnalysisCorpus,
-    query: &BTreeMap<String, String>,
-) -> Result<()> {
-    let name = required(query, "name")?;
-    let declaration = corpus
-        .declaration(name)
-        .with_context(|| format!("unknown declaration {name}"))?;
-    let config = dependency_config(query);
-    let dependencies = corpus
-        .direct_dependencies(name, &config)
-        .context("declaration dependencies are unavailable")?;
-    let dependents = corpus
-        .direct_dependents(name, &config)
-        .context("declaration dependents are unavailable")?;
-    json_response(
-        stream,
-        &DeclarationResponse {
-            name: &declaration.name,
-            kind: &declaration.kind,
-            module: declaration.module_name.as_deref(),
-            generated: declaration.is_generated(),
-            flags: DeclarationFlags {
-                internal: declaration.is_internal,
-                private: declaration.is_private,
-                unsafe_declaration: declaration.is_unsafe,
-                partial: declaration.is_partial,
-            },
-            documentation: declaration.doc_string.as_deref(),
-            source_range: declaration.source_range.as_ref(),
-            type_text: &declaration.r#type,
-            level_parameters: &declaration.level_parameters,
-            axioms: &declaration.axioms,
-            metrics: corpus
-                .declaration_metrics(name)
-                .expect("indexed declaration has metrics"),
-            dependencies,
-            dependents,
-        },
-    )
-}
-
-fn comparison_response(
-    stream: &mut TcpStream,
-    corpus: &AnalysisCorpus,
-    query: &BTreeMap<String, String>,
-) -> Result<()> {
-    let left = required(query, "left")?;
-    let right = required(query, "right")?;
-    let layers = match query.get("layer").map(String::as_str) {
-        Some("statement") => vec![DependencyLayer::Statement],
-        Some("proof") => vec![DependencyLayer::Proof],
-        _ => vec![DependencyLayer::Statement, DependencyLayer::Proof],
-    };
-    let results = layers
-        .into_iter()
-        .filter_map(|layer| corpus.compare_declarations(left, right, layer))
-        .collect::<Vec<_>>();
-    if results.is_empty() {
-        bail!("the selected layer is absent from one or both declarations");
-    }
-    json_response(stream, &results)
-}
-
-fn repeated_response(
-    stream: &mut TcpStream,
-    corpus: &AnalysisCorpus,
-    query: &BTreeMap<String, String>,
-) -> Result<()> {
-    let name = required(query, "name")?;
-    corpus
-        .declaration(name)
-        .with_context(|| format!("unknown declaration {name}"))?;
-    let limit = usize_query(query, "limit", 20)?;
-    let mut filter = filter_from_query(query);
-    filter.include_generated = true;
-    let config = StructuralConfig {
-        filter,
-        mode: if bool_query(query, "exact") {
-            StructuralMode::Exact
-        } else {
-            StructuralMode::AlphaEquivalent
-        },
-        minimum_size: usize_query(query, "minimumSize", 20)?,
-        minimum_support: usize_query(query, "minimumSupport", 2)?,
-        limit: 2_000,
-    };
-    let results = corpus
-        .repeated_subexpressions(&config)
-        .into_iter()
-        .filter(|result| {
-            result
-                .locations
-                .iter()
-                .any(|location| location.declaration == name)
-        })
-        .take(limit)
-        .collect();
-    json_response(
-        stream,
-        &RepeatedForDeclaration {
-            declaration: name.to_owned(),
-            results,
-        },
-    )
-}
-
-fn path_response(
-    stream: &mut TcpStream,
-    corpus: &AnalysisCorpus,
-    query: &BTreeMap<String, String>,
-) -> Result<()> {
-    let source = required(query, "source")?;
-    let target = required(query, "target")?;
-    let path = corpus
-        .shortest_dependency_path(source, target, &dependency_config(query))
-        .with_context(|| format!("no dependency path from {source} to {target}"))?;
-    json_response(stream, &path)
-}
-
-fn filter_from_query(query: &BTreeMap<String, String>) -> AnalysisFilter {
-    AnalysisFilter {
-        include_generated: bool_query(query, "includeGenerated"),
-        include_infrastructure: bool_query(query, "includeInfrastructure"),
-        internal_only: bool_query(query, "internalOnly"),
-        source_backed_only: bool_query(query, "sourceBackedOnly"),
-        declaration_kind: query.get("kind").filter(|value| !value.is_empty()).cloned(),
-        module: query
-            .get("module")
-            .filter(|value| !value.is_empty())
-            .cloned(),
-        layer: match query.get("layer").map(String::as_str) {
-            Some("statement") => LayerSelection::Statement,
-            Some("proof") => LayerSelection::Proof,
-            _ => LayerSelection::Both,
-        },
-    }
-}
-
-fn dependency_config(query: &BTreeMap<String, String>) -> DependencyConfig {
-    let mut filter = filter_from_query(query);
-    // Direct inspection must keep a selected generated declaration visible.
-    filter.include_generated = true;
-    DependencyConfig {
-        filter,
-        weighted: bool_query(query, "weighted"),
-        max_depth: usize_query(query, "maxDepth", 32).unwrap_or(32),
-        limit: usize_query(query, "limit", 500).unwrap_or(500),
-    }
-}
-
-fn required<'a>(query: &'a BTreeMap<String, String>, key: &str) -> Result<&'a str> {
-    query
-        .get(key)
-        .map(String::as_str)
-        .filter(|value| !value.is_empty())
-        .with_context(|| format!("missing query parameter {key}"))
-}
-
-fn bool_query(query: &BTreeMap<String, String>, key: &str) -> bool {
-    query
-        .get(key)
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"))
-}
-
-fn usize_query(query: &BTreeMap<String, String>, key: &str, default: usize) -> Result<usize> {
-    query
-        .get(key)
-        .map(|value| value.parse().with_context(|| format!("invalid {key}")))
-        .unwrap_or(Ok(default))
-}
-
-fn parse_query(query: &str) -> Result<BTreeMap<String, String>> {
-    query
-        .split('&')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let (key, value) = part.split_once('=').unwrap_or((part, ""));
-            Ok((percent_decode(key)?, percent_decode(value)?))
-        })
-        .collect()
-}
-
-fn percent_decode(value: &str) -> Result<String> {
-    let bytes = value.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])?;
-                decoded.push(u8::from_str_radix(hex, 16).context("invalid percent encoding")?);
-                index += 3;
-            }
-            b'+' => {
-                decoded.push(b' ');
-                index += 1;
-            }
-            byte => {
-                decoded.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8(decoded).context("query parameter was not UTF-8")
-}
-
-fn json_response(stream: &mut TcpStream, value: &impl Serialize) -> Result<()> {
-    write_response(
-        stream,
-        200,
-        "application/json; charset=utf-8",
-        &serde_json::to_string(value)?,
-    )
-}
-
-fn write_response(
-    stream: &mut TcpStream,
-    status: u16,
-    content_type: &str,
-    body: &str,
-) -> Result<()> {
-    let reason = match status {
-        200 => "OK",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        _ => "Internal Server Error",
-    };
-    write!(
-        stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn parses_and_decodes_query_parameters() {
-        let query =
-            parse_query("name=intervalIntegral.integral_deriv_eq_sub%27&layer=proof").unwrap();
-        assert_eq!(query["name"], "intervalIntegral.integral_deriv_eq_sub'");
-        assert_eq!(query["layer"], "proof");
+    fn default_ui_query_maps_to_expected_request() {
+        let query = UiGraphQuery::default();
+        let defaults = GraphRequest::default();
+        assert_eq!(query.mode.unwrap_or(defaults.mode), "similarity");
+        assert_eq!(query.limit.unwrap_or(defaults.limit), 80);
     }
 }

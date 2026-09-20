@@ -203,10 +203,25 @@ cargo run -- --import "$FTC" serve
 ```
 
 After Sieve extracts and indexes the selected modules, open
-`http://127.0.0.1:4173`. The built-in landing page links to the in-process Rust
-analysis API. Declaration details, dependency links, structural comparisons,
-and repeated fragments come from extracted Lean data rather than fixture data.
+`http://127.0.0.1:4173`. The graph-first application opens on a bounded map of
+statement families. Expand a family to inspect theorem variants, open a theorem
+neighborhood, compare two pinned statements, trace downstream use, inspect
+connection witnesses, or enter an extracted proof outline. Declaration details,
+dependency links, structural comparisons, and proof paths all come from the
+in-process Rust analysis rather than fixture data.
 To use another port, add `--port 8080`.
+
+The production client is built into `web/dist`:
+
+```sh
+cd web
+npm install
+npm run build
+```
+
+For frontend development, keep `sieve serve` on port 4173 and run `npm run dev`
+from `web/`; Vite proxies `/api` to the Rust process. Frontend checks are
+available through `npm run typecheck` and `npm test`.
 
 Inspect a bounded prefix of an elaborated proof tree:
 

@@ -4,6 +4,7 @@ pub mod extraction;
 pub mod model;
 pub mod report;
 pub mod server;
+pub mod ui;
 pub mod validation;
 
 pub use analysis::corpus::AnalysisCorpus;
