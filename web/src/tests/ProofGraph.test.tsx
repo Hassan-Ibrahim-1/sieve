@@ -60,6 +60,30 @@ describe("ProofGraph", () => {
     expect(layout.nodes.find((node) => node.rawStepId === 64)!.y).toBeLessThan(Math.min(...sourcePositions.map((node) => node.y)));
   });
 
+  it("folds deep narrow proofs into spatially separated bands", () => {
+    const nodes = Array.from({ length: 200 }, (_, rawStepId) => ({
+      rawStepId,
+      kind: rawStepId === 199 ? "conclusion" : "namedApplication",
+      proposition: `P${rawStepId}`,
+      context: [],
+      hypothesisReferences: [],
+      namedReferences: [],
+    }));
+    const edges = nodes.slice(1).map((node) => ({
+      source: node.rawStepId - 1,
+      target: node.rawStepId,
+      pathCount: 1,
+      maximumRawPathLength: 2,
+      rawStepPath: [node.rawStepId - 1, node.rawStepId],
+    }));
+    const layout = proofLayout(nodes, edges);
+    const width = Math.max(...layout.nodes.map((node) => node.x)) - Math.min(...layout.nodes.map((node) => node.x));
+    const height = Math.max(...layout.nodes.map((node) => node.y)) - Math.min(...layout.nodes.map((node) => node.y));
+
+    expect(width).toBeGreaterThan(0);
+    expect(Math.max(width, height) / Math.min(width, height)).toBeLessThan(4);
+  });
+
   it("aggregates parallel condensed paths for Sigma's simple graph", () => {
     const edges = aggregateProofEdges([
       { source: 0, target: 8, pathCount: 3, maximumRawPathLength: 3, rawStepPath: [0, 3, 8] },

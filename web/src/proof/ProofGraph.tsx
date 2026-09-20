@@ -13,7 +13,7 @@ export function ProofGraph({ data, selected, showLabels, theme, onSelect }: {
   if (data.outline.retainedNodes.length === 0) {
     return <div className="empty-state">No proof outline could be retained for this theorem.</div>;
   }
-  return <GraphSurface label="Interactive proof-step graph">
+  return <GraphSurface label="Interactive proof-step graph" preventNodeOverlap>
     <ProofGraphRenderer data={data} selected={selected} showLabels={showLabels} theme={theme} onSelect={onSelect} />
   </GraphSurface>;
 }

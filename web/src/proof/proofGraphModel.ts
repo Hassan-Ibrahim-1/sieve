@@ -77,6 +77,20 @@ export function proofLayout(nodes: ProofOutlineNode[], edges: ProofOutlineEdge[]
     });
     verticalOffset += Math.max(0, subrows - 1) * ROW_GAP + RANK_GAP;
   }
+
+  // A deep, narrow proof wastes most of the viewport and compresses adjacent
+  // ranks until their circles overlap. Fold long outlines into reading-order
+  // bands so the available width contributes to node separation as well.
+  const panelWidth = Math.max(COLUMN_GAP * 2, (maximumColumns + 1) * COLUMN_GAP);
+  if (verticalOffset > panelWidth * 2.5) {
+    const panelHeight = Math.max(RANK_GAP * 4, Math.sqrt(verticalOffset * panelWidth));
+    for (const node of positioned) {
+      const distance = -node.y;
+      const panel = Math.floor(distance / panelHeight);
+      node.x += panel * panelWidth;
+      node.y = -(distance - panel * panelHeight);
+    }
+  }
   return { nodes: positioned, rowCount: Math.max(1, ...rows.keys()) + 1, maximumColumns };
 }
 

@@ -1,4 +1,9 @@
-import { groupRadiusAtZoom, NODE_LABEL_ZOOM_THRESHOLD, nodeLabelsAreVisible } from "../graph/graphZoom";
+import {
+  collisionSafeNodeSizeRatio,
+  groupRadiusAtZoom,
+  NODE_LABEL_ZOOM_THRESHOLD,
+  nodeLabelsAreVisible,
+} from "../graph/graphZoom";
 
 describe("graph label visibility", () => {
   it("shows labels while close and hides them past the zoom-out threshold", () => {
@@ -11,5 +16,11 @@ describe("graph label visibility", () => {
     expect(groupRadiusAtZoom(40, 1)).toBe(40);
     expect(groupRadiusAtZoom(40, 0.5)).toBe(80);
     expect(groupRadiusAtZoom(40, 2)).toBe(20);
+  });
+
+  it("shrinks proof nodes as quickly as their separation when zooming out", () => {
+    expect(collisionSafeNodeSizeRatio(0.25)).toBe(0.5);
+    expect(collisionSafeNodeSizeRatio(1)).toBe(1);
+    expect(collisionSafeNodeSizeRatio(4)).toBe(4);
   });
 });

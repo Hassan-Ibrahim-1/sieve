@@ -3,14 +3,16 @@ import type { KeyboardEventHandler, ReactNode } from "react";
 import { EdgeArrowProgram, NodeCircleProgram, type NodeLabelDrawingFunction } from "sigma/rendering";
 import type { Settings } from "sigma/settings";
 import type { Theme } from "../theme/useTheme";
+import { collisionSafeNodeSizeRatio } from "./graphZoom";
 
-export function GraphSurface({ label, children, onKeyDown }: {
+export function GraphSurface({ label, children, onKeyDown, preventNodeOverlap = false }: {
   label: string;
   children: ReactNode;
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
+  preventNodeOverlap?: boolean;
 }) {
   return <div className="graph-canvas" tabIndex={0} aria-label={label} onKeyDown={onKeyDown}>
-    <SigmaContainer settings={graphSettings}>{children}</SigmaContainer>
+    <SigmaContainer settings={preventNodeOverlap ? collisionSafeGraphSettings : graphSettings}>{children}</SigmaContainer>
     <div className="canvas-tools" aria-hidden="true"><span>+</span><span>−</span></div>
   </div>;
 }
@@ -65,4 +67,11 @@ const graphSettings: Partial<Settings> = {
   nodeHoverProgramClasses: { group: GroupHoverProgram },
   edgeProgramClasses: { arrow: EdgeArrowProgram },
   defaultEdgeType: "line",
+};
+
+// Both settings objects stay stable so React Sigma does not reconstruct its
+// WebGL renderer during camera updates.
+const collisionSafeGraphSettings: Partial<Settings> = {
+  ...graphSettings,
+  zoomToSizeRatioFunction: collisionSafeNodeSizeRatio,
 };
