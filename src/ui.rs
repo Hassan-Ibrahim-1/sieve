@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::analysis::corpus::AnalysisCorpus;
 use crate::analysis::dependency::{DependencyConfig, DependencyPath};
 use crate::analysis::filters::{AnalysisFilter, DependencyLayer};
-use crate::analysis::proof_steps::{ProofOutlineEvidence, build_proof_outline};
+use crate::analysis::proof_steps::{ProofOutlineEdge, ProofOutlineNode, build_proof_outline};
 use crate::analysis::structure::StructuralMode;
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,7 +33,26 @@ pub struct ProofDeclaration {
 pub struct ProofOutlineResponse {
     pub declaration: String,
     pub statement: String,
-    pub outline: ProofOutlineEvidence,
+    pub outline: UiProofOutline,
+}
+
+/// Compact proof data for the interactive graph. The full raw extraction is
+/// available through the proof-step report, but sending it here makes large
+/// theorem views parse megabytes of data they never render.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiProofOutline {
+    pub algorithm: String,
+    pub retention_rules: Vec<String>,
+    pub complete: bool,
+    pub truncation_reason: Option<String>,
+    pub visited_terms: usize,
+    pub conclusion_step: Option<usize>,
+    pub raw_step_count: usize,
+    pub raw_edge_count: usize,
+    pub candidate_node_count: usize,
+    pub retained_nodes: Vec<ProofOutlineNode>,
+    pub condensed_edges: Vec<ProofOutlineEdge>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -232,10 +251,23 @@ impl UiIndex {
             .proof_steps
             .as_ref()
             .with_context(|| format!("proof-step extraction is absent for {name}"))?;
+        let outline = build_proof_outline(extraction)?;
         Ok(ProofOutlineResponse {
             declaration: declaration.name.clone(),
             statement: declaration.r#type.clone(),
-            outline: build_proof_outline(extraction)?,
+            outline: UiProofOutline {
+                algorithm: outline.algorithm,
+                retention_rules: outline.retention_rules,
+                complete: outline.complete,
+                truncation_reason: outline.truncation_reason,
+                visited_terms: outline.visited_terms,
+                conclusion_step: outline.conclusion_step,
+                raw_step_count: outline.raw_steps.len(),
+                raw_edge_count: outline.raw_edges.len(),
+                candidate_node_count: outline.candidate_node_count,
+                retained_nodes: outline.retained_nodes,
+                condensed_edges: outline.condensed_edges,
+            },
         })
     }
 
@@ -844,7 +876,11 @@ mod tests {
         let response = index.proof_outline(&corpus, "Fixture.t000").unwrap();
         assert_eq!(response.declaration, "Fixture.t000");
         assert_eq!(response.outline.conclusion_step, Some(0));
+        assert_eq!(response.outline.raw_step_count, 1);
         assert_eq!(response.outline.retained_nodes.len(), 1);
+        let json = serde_json::to_value(&response).unwrap();
+        assert!(json["outline"].get("rawSteps").is_none());
+        assert!(json["outline"].get("rawEdges").is_none());
     }
 
     #[test]

@@ -396,10 +396,11 @@ pub fn theorem_lenses(report: &TheoremLensReport) -> String {
         writeln!(out, "  proof outline").unwrap();
         writeln!(
             out,
-            "    extraction: complete={}, raw_steps={}, retained_steps={}, condensed_edges={}",
+            "    extraction: complete={}, raw_steps={}, shown_steps={}/{}, condensed_edges={}",
             proof.complete,
             proof.raw_steps.len(),
             proof.retained_nodes.len(),
+            proof.candidate_node_count,
             proof.condensed_edges.len()
         )
         .unwrap();
@@ -425,10 +426,12 @@ pub fn theorem_lenses(report: &TheoremLensReport) -> String {
         for edge in &proof.condensed_edges {
             writeln!(
                 out,
-                "    #{} -> #{} via {}",
+                "    #{} -> #{} via {} ({} raw path{})",
                 edge.source,
                 edge.target,
-                format_raw_path(&edge.raw_step_path)
+                format_raw_path(&edge.raw_step_path),
+                edge.path_count,
+                if edge.path_count == 1 { "" } else { "s" }
             )
             .unwrap();
         }

@@ -1,8 +1,9 @@
 import type { ProofOutlineEdge, ProofOutlineNode } from "../api/types";
 
-const COLUMN_GAP = 170;
-const ROW_GAP = 120;
-const RANK_GAP = 150;
+const COLUMN_GAP = 220;
+const ROW_GAP = 160;
+const RANK_GAP = 210;
+const MAX_COLUMNS = 10;
 
 interface PositionedNode extends ProofOutlineNode { x: number; y: number }
 
@@ -19,14 +20,14 @@ export function aggregateProofEdges(edges: ProofOutlineEdge[]): AggregatedProofE
     const key = `${edge.source}:${edge.target}`;
     const existing = aggregated.get(key);
     if (existing) {
-      existing.pathCount += 1;
-      existing.maximumRawPathLength = Math.max(existing.maximumRawPathLength, edge.rawStepPath.length);
+      existing.pathCount += edge.pathCount;
+      existing.maximumRawPathLength = Math.max(existing.maximumRawPathLength, edge.maximumRawPathLength);
     } else {
       aggregated.set(key, {
         source: edge.source,
         target: edge.target,
-        pathCount: 1,
-        maximumRawPathLength: edge.rawStepPath.length,
+        pathCount: edge.pathCount,
+        maximumRawPathLength: edge.maximumRawPathLength,
       });
     }
   }
@@ -35,22 +36,20 @@ export function aggregateProofEdges(edges: ProofOutlineEdge[]): AggregatedProofE
 
 export function proofLayout(nodes: ProofOutlineNode[], edges: ProofOutlineEdge[]) {
   const nodeIds = new Set(nodes.map((node) => node.rawStepId));
-  const incoming = new Map<number, number[]>();
+  const outgoing = new Map<number, number[]>();
   for (const edge of edges) {
     if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
-    incoming.set(edge.target, [...(incoming.get(edge.target) ?? []), edge.source]);
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
   }
-  const depth = new Map<number, number>();
-  const visit = (id: number, visiting = new Set<number>()): number => {
-    if (depth.has(id)) return depth.get(id)!;
-    if (visiting.has(id)) return 0;
-    const nextVisiting = new Set(visiting).add(id);
-    const prerequisites = incoming.get(id) ?? [];
-    const value = prerequisites.length === 0 ? 0 : 1 + Math.max(...prerequisites.map((source) => visit(source, nextVisiting)));
-    depth.set(id, value);
-    return value;
-  };
-  nodes.forEach((node) => visit(node.rawStepId));
+  // Raw step ids are topological order. Propagating ranks forward avoids the
+  // recursive Set cloning that becomes expensive on large theorem outlines.
+  const depth = new Map(nodes.map((node) => [node.rawStepId, 0]));
+  for (const source of [...nodeIds].sort((left, right) => left - right)) {
+    const nextDepth = depth.get(source)! + 1;
+    for (const target of outgoing.get(source) ?? []) {
+      depth.set(target, Math.max(depth.get(target) ?? 0, nextDepth));
+    }
+  }
   const rows = new Map<number, ProofOutlineNode[]>();
   for (const node of nodes) rows.set(depth.get(node.rawStepId)!, [...(rows.get(depth.get(node.rawStepId)!) ?? []), node]);
   for (const row of rows.values()) row.sort((left, right) => left.rawStepId - right.rawStepId);
@@ -61,7 +60,7 @@ export function proofLayout(nodes: ProofOutlineNode[], edges: ProofOutlineEdge[]
     // A single very broad rank makes Sigma fit thousands of horizontal graph
     // units into the viewport, which can make every node look invisible. Wrap
     // broad ranks into a compact grid while keeping each rank in its own band.
-    const columns = Math.max(1, Math.ceil(Math.sqrt(row.length * 1.6)));
+    const columns = Math.min(MAX_COLUMNS, Math.max(1, Math.ceil(Math.sqrt(row.length * 1.6))));
     maximumColumns = Math.max(maximumColumns, columns);
     const subrows = Math.ceil(row.length / columns);
     row.forEach((node, index) => {

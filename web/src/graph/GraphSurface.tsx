@@ -20,13 +20,13 @@ const drawNodeLabel: NodeLabelDrawingFunction = (context, data, settings) => {
   const dark = (data as typeof data & { labelTheme?: Theme }).labelTheme === "dark";
   const fontSize = settings.labelSize;
   context.font = `${settings.labelWeight} ${fontSize}px ${settings.labelFont}`;
-  const width = Math.ceil(context.measureText(data.label).width) + 12;
-  const height = 19;
+  const width = Math.ceil(context.measureText(data.label).width) + 10;
+  const height = 16;
   const x = Math.round(data.x - width / 2);
-  const y = Math.round(data.y + data.size + 7);
+  const y = Math.round(data.y + data.size + 5);
 
   context.beginPath();
-  context.roundRect(x, y, width, height, 5);
+  context.roundRect(x, y, width, height, 4);
   context.fillStyle = dark ? "rgba(17, 21, 19, .94)" : "rgba(255, 255, 255, .96)";
   context.fill();
   context.strokeStyle = dark ? "rgba(66, 199, 147, .24)" : "rgba(24, 33, 30, .15)";
@@ -51,7 +51,7 @@ const graphSettings: Partial<Settings> = {
   allowInvalidContainer: true,
   renderEdgeLabels: false,
   labelFont: "IBM Plex Sans, ui-sans-serif, system-ui",
-  labelSize: 10,
+  labelSize: 8,
   labelWeight: "500",
   labelColor: { color: "#18211e" },
   labelDensity: 0.55,

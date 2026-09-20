@@ -15,6 +15,8 @@ export function GraphControls({ state, dispatch, bootstrap }: Props) {
         <h2>View</h2>
         <Check label="Emphasize most used" checked={state.mostUsed}
           onChange={(mostUsed) => dispatch({ type: "patch", value: { mostUsed } })} />
+        <Check label="Show labels" checked={state.showLabels}
+          onChange={(showLabels) => dispatch({ type: "patch", value: { showLabels } })} />
       </section>
 
       <RangeField label="Maximum witness paths" value={state.witnessLimit} min={1} max={8} step={1}

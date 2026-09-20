@@ -99,6 +99,7 @@ export function App() {
   if (state.view === "proof") {
     return <AppShell theme={theme} view={state.view} onTheme={toggle} onView={changeView}
       controls={<ProofControls bootstrap={bootstrap} declaration={state.proofDeclaration} data={proof}
+        state={state} dispatch={dispatch}
         onDeclaration={(proofDeclaration) => dispatch({ type: "patch", value: { proofDeclaration } })} />}
       inspector={<ProofInspector data={proof} selected={selectedProofStep} />}>
       <div className="graph-header proof-header">
@@ -106,7 +107,8 @@ export function App() {
         {proof && <div className="visible-count"><strong>{proof.outline.retainedNodes.length}</strong><span>steps</span><strong>{proof.outline.condensedEdges.length}</strong><span>connections</span></div>}
       </div>
       <div className="graph-stage" data-loading={proofBusy}>
-        {proof && <ProofGraph data={proof} selected={selectedProofStep} theme={theme} onSelect={setSelectedProofStep} />}
+        {proof && <ProofGraph data={proof} selected={selectedProofStep} showLabels={state.showLabels}
+          theme={theme} onSelect={setSelectedProofStep} />}
         {(proofBusy || !bootstrap) && !proof && !proofError && !error && <div className="loading-state"><span className="loading-ring" /></div>}
         {(proofError || error) && <div className="error-state"><span>!</span><p>{proofError ?? error}</p><button onClick={() => location.reload()}>Retry</button></div>}
         {!proofBusy && !proofError && !error && bootstrap?.proofDeclarations.length === 0 && <div className="empty-state">No theorem proof steps were extracted for this corpus.</div>}
@@ -120,7 +122,8 @@ export function App() {
         onWitnesses={showWitnesses} onCloseDetail={() => setWitnesses(undefined)} />}>
       {data && <GraphHeader data={data} />}
       <div className="graph-stage" data-loading={busy}>
-        {data && <GraphCanvas data={data} mostUsed={state.mostUsed} selected={state.selected} selectedEdge={state.selectedEdge}
+        {data && <GraphCanvas data={data} mostUsed={state.mostUsed} showLabels={state.showLabels}
+          selected={state.selected} selectedEdge={state.selectedEdge}
           theme={theme}
           onSelect={selectNode} onSelectEdge={(id) => dispatch({ type: "selectEdge", id })}
           onOpen={selectNode} onOpenEdge={openEdge} />}

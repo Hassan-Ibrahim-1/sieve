@@ -37,6 +37,8 @@ export interface ProofOutlineNode {
 export interface ProofOutlineEdge {
   source: number;
   target: number;
+  pathCount: number;
+  maximumRawPathLength: number;
   rawStepPath: number[];
 }
 
@@ -52,8 +54,9 @@ export interface ProofOutlineResponse {
     conclusionStep: number | null;
     retainedNodes: ProofOutlineNode[];
     condensedEdges: ProofOutlineEdge[];
-    rawSteps: unknown[];
-    rawEdges: Array<{ source: number; target: number }>;
+    rawStepCount: number;
+    rawEdgeCount: number;
+    candidateNodeCount: number;
   };
 }
 

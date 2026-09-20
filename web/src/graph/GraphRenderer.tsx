@@ -13,6 +13,7 @@ const TRANSPARENT_GROUP_COLOR = "rgba(0, 0, 0, 0)";
 interface Props {
   data: GraphResponse;
   mostUsed: boolean;
+  showLabels: boolean;
   selected?: string;
   selectedEdge?: string;
   theme: Theme;
@@ -23,7 +24,7 @@ interface Props {
 }
 
 export function GraphRenderer(props: Props) {
-  const { data, mostUsed, selected, selectedEdge, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
+  const { data, mostUsed, showLabels, selected, selectedEdge, theme, onSelect, onSelectEdge, onOpen, onOpenEdge } = props;
   const loadGraph = useLoadGraph();
   const registerEvents = useRegisterEvents();
   const sigma = useSigma();
@@ -160,7 +161,7 @@ export function GraphRenderer(props: Props) {
     const camera = sigma.getCamera();
     let labelsVisible: boolean | undefined;
     const syncLabelVisibility = (state: ReturnType<typeof camera.getState>) => {
-      const nextLabelsVisible = nodeLabelsAreVisible(state.ratio);
+      const nextLabelsVisible = showLabels && nodeLabelsAreVisible(state.ratio);
       if (nextLabelsVisible === labelsVisible) return;
       labelsVisible = nextLabelsVisible;
       sigma.setSetting("renderLabels", nextLabelsVisible);
@@ -169,7 +170,7 @@ export function GraphRenderer(props: Props) {
     syncLabelVisibility(camera.getState());
     camera.on("updated", syncLabelVisibility);
     return () => { camera.removeListener("updated", syncLabelVisibility); };
-  }, [sigma]);
+  }, [showLabels, sigma]);
 
   useEffect(() => {
     if (!selected || !sigma.getGraph().hasNode(selected)) return;
@@ -213,7 +214,7 @@ export function GraphRenderer(props: Props) {
   return null;
 }
 
-export function compactGraphLabel(value: string, maximum = 38) {
+export function compactGraphLabel(value: string, maximum = 18) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maximum) return normalized;
   return `${normalized.slice(0, maximum - 1).trimEnd()}…`;

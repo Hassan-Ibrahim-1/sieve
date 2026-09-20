@@ -6,6 +6,7 @@ import { GraphSurface } from "./GraphSurface";
 interface Props {
   data: GraphResponse;
   mostUsed: boolean;
+  showLabels: boolean;
   selected?: string;
   selectedEdge?: string;
   theme: Theme;

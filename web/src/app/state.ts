@@ -4,6 +4,7 @@ export interface UiState {
   view: "sieve" | "proof";
   proofDeclaration?: string;
   mostUsed: boolean;
+  showLabels: boolean;
   witnessLimit: number;
   filters: UiFilters;
   selected?: string;
@@ -19,6 +20,7 @@ export type Action =
 export const initialState: UiState = {
   view: "sieve",
   mostUsed: false,
+  showLabels: true,
   witnessLimit: 3,
   filters: { includeTheorems: true, includeDefinitions: true },
 };
@@ -39,6 +41,7 @@ export function stateFromUrl(search: string): UiState {
     view: params.get("view") === "proof" ? "proof" : "sieve",
     proofDeclaration: params.get("proof") || undefined,
     mostUsed: booleanParam(params, "mostUsed", false),
+    showLabels: booleanParam(params, "labels", initialState.showLabels),
     witnessLimit: boundedNumber(params.get("witnessLimit"), 1, 8, initialState.witnessLimit),
     selected: params.get("selected") || undefined,
     selectedEdge: params.get("selectedEdge") || undefined,
@@ -66,6 +69,7 @@ export function writeStateToUrl(state: UiState) {
   if (state.view === "proof") params.set("view", "proof");
   if (state.proofDeclaration) params.set("proof", state.proofDeclaration);
   params.set("mostUsed", state.mostUsed ? "1" : "0");
+  params.set("labels", state.showLabels ? "1" : "0");
   params.set("witnessLimit", String(state.witnessLimit));
   params.set("theorems", state.filters.includeTheorems ? "1" : "0");
   params.set("definitions", state.filters.includeDefinitions ? "1" : "0");

@@ -2,8 +2,8 @@ import { initialState, reducer, stateFromUrl } from "../app/state";
 
 describe("UI state", () => {
   it("loads the flat graph state from the URL", () => {
-    const state = stateFromUrl("?mostUsed=1&witnessLimit=6&definitions=0&technical=1");
-    expect(state).toMatchObject({ mostUsed: true, witnessLimit: 6 });
+    const state = stateFromUrl("?mostUsed=1&labels=0&witnessLimit=6&definitions=0&technical=1");
+    expect(state).toMatchObject({ mostUsed: true, showLabels: false, witnessLimit: 6 });
     expect(state.filters.includeDefinitions).toBe(false);
     expect(state.filters).not.toHaveProperty("includeTechnical");
   });

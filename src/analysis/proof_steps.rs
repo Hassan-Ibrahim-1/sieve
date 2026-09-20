@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,11 @@ pub struct ProofOutlineNode {
 pub struct ProofOutlineEdge {
     pub source: usize,
     pub target: usize,
-    /// Inclusive raw-step path from the retained source to the retained target.
+    /// Number of raw paths represented by this edge.
+    pub path_count: usize,
+    /// Longest represented path, including both retained endpoints.
+    pub maximum_raw_path_length: usize,
+    /// One inclusive raw-step path, retained as inspectable evidence.
     pub raw_step_path: Vec<usize>,
 }
 
@@ -44,6 +48,8 @@ pub struct ProofOutlineEvidence {
     pub conclusion_step: Option<usize>,
     pub raw_steps: Vec<ProofStep>,
     pub raw_edges: Vec<ProofStepEdge>,
+    /// Nodes matching the semantic retention rules before overview limiting.
+    pub candidate_node_count: usize,
     pub retained_nodes: Vec<ProofOutlineNode>,
     pub condensed_edges: Vec<ProofOutlineEdge>,
 }
@@ -240,6 +246,7 @@ pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutl
             conclusion_step: None,
             raw_steps: extraction.steps.clone(),
             raw_edges,
+            candidate_node_count: 0,
             retained_nodes: vec![],
             condensed_edges: vec![],
         });
@@ -251,7 +258,7 @@ pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutl
         .into_iter()
         .chain(std::iter::once(conclusion))
         .collect::<BTreeSet<_>>();
-    let retained = extraction
+    let candidates = extraction
         .steps
         .iter()
         .filter(|step| {
@@ -266,6 +273,8 @@ pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutl
         })
         .map(|step| step.id)
         .collect::<BTreeSet<_>>();
+    let candidate_node_count = candidates.len();
+    let retained = select_outline_nodes(extraction, &candidates, conclusion);
 
     let retained_nodes = retained
         .iter()
@@ -282,29 +291,41 @@ pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutl
         })
         .collect::<Vec<_>>();
 
-    let mut condensed_edges = BTreeSet::new();
+    let mut condensed_edges = Vec::new();
     for &source in &retained {
-        let mut queue = VecDeque::new();
+        // The raw proof graph is a DAG whose step ids are topological order.
+        // Aggregate paths as they cross omitted nodes instead of enumerating
+        // every path. Enumerating paths is exponential for branching proofs
+        // such as exists_le_sylow, even though the rendered graph ultimately
+        // merges all paths with the same retained endpoints.
+        let mut paths = BTreeMap::<usize, (usize, usize, Vec<usize>)>::new();
         for &next in graph.direct_dependents(source).unwrap_or_default() {
             if ancestors.contains(&next) {
-                queue.push_back(vec![source, next]);
+                paths.insert(next, (1, 2, vec![source, next]));
             }
         }
-        while let Some(path) = queue.pop_front() {
-            let current = *path.last().expect("outline path is nonempty");
+        while let Some((&current, _)) = paths.first_key_value() {
+            let (path_count, maximum_raw_path_length, sample_path) =
+                paths.remove(&current).expect("path summary exists");
             if retained.contains(&current) {
-                condensed_edges.insert(ProofOutlineEdge {
+                condensed_edges.push(ProofOutlineEdge {
                     source,
                     target: current,
-                    raw_step_path: path,
+                    path_count,
+                    maximum_raw_path_length,
+                    raw_step_path: sample_path,
                 });
                 continue;
             }
             for &next in graph.direct_dependents(current).unwrap_or_default() {
                 if ancestors.contains(&next) {
-                    let mut extended = path.clone();
-                    extended.push(next);
-                    queue.push_back(extended);
+                    let entry = paths.entry(next).or_insert_with(|| {
+                        let mut path = sample_path.clone();
+                        path.push(next);
+                        (0, 0, path)
+                    });
+                    entry.0 = entry.0.saturating_add(path_count);
+                    entry.1 = entry.1.max(maximum_raw_path_length.saturating_add(1));
                 }
             }
         }
@@ -319,8 +340,9 @@ pub fn build_proof_outline(extraction: &ProofStepExtraction) -> Result<ProofOutl
         conclusion_step: Some(conclusion),
         raw_steps: extraction.steps.clone(),
         raw_edges,
+        candidate_node_count,
         retained_nodes,
-        condensed_edges: condensed_edges.into_iter().collect(),
+        condensed_edges,
     })
 }
 
@@ -328,15 +350,107 @@ fn proof_outline_retention_rules() -> Vec<String> {
     vec![
         "retain the conclusion and every local-fact or branch-conclusion ancestor".into(),
         "retain named applications except generated instances, coercion adapters, and core equality/congruence plumbing".into(),
+        "for large proofs, limit named-application landmarks to a 240-node overview, prioritizing rare references and sampling the full proof order".into(),
         "replace omitted paths with condensed edges carrying inclusive raw-step paths".into(),
     ]
 }
 
+const MAX_OUTLINE_NODES: usize = 240;
+
+fn select_outline_nodes(
+    extraction: &ProofStepExtraction,
+    candidates: &BTreeSet<usize>,
+    conclusion: usize,
+) -> BTreeSet<usize> {
+    if candidates.len() <= MAX_OUTLINE_NODES {
+        return candidates.clone();
+    }
+
+    let mandatory = candidates
+        .iter()
+        .copied()
+        .filter(|&id| {
+            id != conclusion
+                && matches!(
+                    extraction.steps[id].kind.as_str(),
+                    "localFact" | "branchConclusion"
+                )
+        })
+        .collect::<Vec<_>>();
+    let mut retained = BTreeSet::from([conclusion]);
+    if mandatory.len() >= MAX_OUTLINE_NODES - 1 {
+        for index in 0..MAX_OUTLINE_NODES - 1 {
+            retained.insert(mandatory[index * mandatory.len() / (MAX_OUTLINE_NODES - 1)]);
+        }
+        return retained;
+    }
+    retained.extend(mandatory);
+
+    let mut reference_frequency = BTreeMap::<&str, usize>::new();
+    for &id in candidates {
+        if retained.contains(&id) {
+            continue;
+        }
+        for name in &extraction.steps[id].named_references {
+            *reference_frequency.entry(name).or_default() += 1;
+        }
+    }
+    let mut optional = candidates
+        .iter()
+        .copied()
+        .filter(|id| !retained.contains(id))
+        .collect::<Vec<_>>();
+    optional.sort_by_key(|&id| {
+        let rarity = extraction.steps[id]
+            .named_references
+            .iter()
+            .filter_map(|name| reference_frequency.get(name.as_str()))
+            .copied()
+            .min()
+            .unwrap_or(usize::MAX);
+        (rarity, id)
+    });
+
+    let budget = MAX_OUTLINE_NODES - retained.len();
+    let priority_budget = budget * 3 / 4;
+    retained.extend(optional.iter().take(priority_budget).copied());
+
+    let mut remainder = optional
+        .into_iter()
+        .filter(|id| !retained.contains(id))
+        .collect::<Vec<_>>();
+    remainder.sort_unstable();
+    let remaining_budget = MAX_OUTLINE_NODES - retained.len();
+    for index in 0..remaining_budget {
+        let sample = index * remainder.len() / remaining_budget;
+        retained.insert(remainder[sample]);
+    }
+    retained
+}
+
 fn meaningful_named_reference(name: &str) -> bool {
     const CORE_PLUMBING: &[&str] = &[
-        "id", "congrArg", "Eq.mpr", "Eq.mp", "Eq.symm", "Iff.mpr", "Iff.mp",
+        "id",
+        "rfl",
+        "Eq.refl",
+        "congrArg",
+        "Eq.mpr",
+        "Eq.mp",
+        "Eq.symm",
+        "Iff.mpr",
+        "Iff.mp",
+        "Exists.intro",
+        "Exists.elim",
+        "And.intro",
+        "And.left",
+        "And.right",
+        "Or.elim",
+        "Subtype.property",
     ];
-    !name.starts_with("inst") && !name.contains(".to") && !CORE_PLUMBING.contains(&name)
+    !name.starts_with("inst")
+        && !name.contains(".to")
+        && !name.contains(".match_")
+        && !CORE_PLUMBING.contains(&name)
 }
 
 fn is_prefix(left: &[String], right: &[String]) -> bool {
@@ -605,6 +719,74 @@ mod tests {
             }
             assert!(seen.contains(&conclusion));
         }
+    }
+
+    #[test]
+    fn condensed_edges_count_branching_paths_without_enumerating_them() {
+        let extraction = ProofStepExtraction {
+            complete: true,
+            truncation_reason: None,
+            visited_terms: 5,
+            conclusion_step: Some(4),
+            steps: vec![
+                named_step(0, "localFact", vec![], &[]),
+                named_step(1, "anonymousApplication", vec![0], &[]),
+                named_step(2, "anonymousApplication", vec![0], &[]),
+                named_step(3, "anonymousApplication", vec![1, 2], &[]),
+                named_step(4, "conclusion", vec![3], &[]),
+            ],
+            named_results: vec![],
+        };
+
+        let outline = build_proof_outline(&extraction).unwrap();
+        let edge = outline
+            .condensed_edges
+            .iter()
+            .find(|edge| edge.source == 0 && edge.target == 4)
+            .expect("branching paths are represented by one edge");
+        assert_eq!(edge.path_count, 2);
+        assert_eq!(edge.maximum_raw_path_length, 4);
+        assert_eq!(edge.raw_step_path.first(), Some(&0));
+        assert_eq!(edge.raw_step_path.last(), Some(&4));
+    }
+
+    #[test]
+    fn large_outlines_are_limited_to_semantic_landmarks() {
+        let mut steps = (0..300)
+            .map(|id| {
+                named_step(
+                    id,
+                    "namedApplication",
+                    id.checked_sub(1).into_iter().collect(),
+                    &["Foundation"],
+                )
+            })
+            .collect::<Vec<_>>();
+        steps.push(named_step(300, "conclusion", vec![299], &[]));
+        let extraction = ProofStepExtraction {
+            complete: true,
+            truncation_reason: None,
+            visited_terms: 301,
+            conclusion_step: Some(300),
+            steps,
+            named_results: vec![crate::model::NamedResultSnapshot {
+                name: "Foundation".into(),
+                kind: "theorem".into(),
+                module_name: Some("Fixture".into()),
+                r#type: "P".into(),
+                type_graph: graph(),
+            }],
+        };
+
+        let outline = build_proof_outline(&extraction).unwrap();
+        assert_eq!(outline.candidate_node_count, 301);
+        assert_eq!(outline.retained_nodes.len(), MAX_OUTLINE_NODES);
+        assert!(
+            outline
+                .retained_nodes
+                .iter()
+                .any(|node| node.raw_step_id == 300)
+        );
     }
 
     #[test]

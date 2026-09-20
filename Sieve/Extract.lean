@@ -427,15 +427,39 @@ partial def walkProofTerm (builder : IO.Ref ProofStepBuilder) (expr : Expr)
   unless ← countVisitedProofTerm builder do return #[]
   match expr with
   | .lam binderName domain body binderInfo =>
-      Meta.withLocalDecl binderName binderInfo domain fun fvar => do
-        let localId := proofPathId path context.size
-        let kind := if ← Meta.isProp domain then "assumption" else "variable"
-        let entry ← snapshotContextEntry localId binderName kind binderInfo domain
-        walkProofTerm builder (body.instantiate1 fvar) (context.push entry)
-          (bindings.push (fvar.fvarId!, localId, none)) (path.push 0) forcedKind?
+      if forcedKind? == some "localFact" then
+        -- A let-bound local theorem may itself be a function taking hypotheses.
+        -- Its body is inspected in that extended scope, but the local-fact node used
+        -- by the surrounding proof must represent the whole lambda in the outer scope.
+        let childSteps ← Meta.withLocalDecl binderName binderInfo domain fun fvar => do
+          let localId := proofPathId path context.size
+          let kind := if ← Meta.isProp domain then "assumption" else "variable"
+          let entry ← snapshotContextEntry localId binderName kind binderInfo domain
+          walkProofTerm builder (body.instantiate1 fvar) (context.push entry)
+            (bindings.push (fvar.fvarId!, localId, none)) (path.push 0)
+        let proposition ← instantiateMVars (← Meta.inferType expr)
+        if ← Meta.isProp proposition then
+          return (← addProofCandidate builder expr proposition "localFact" context bindings path
+            childSteps none).map (#[·]) |>.getD #[]
+        else
+          return childSteps
+      else
+        Meta.withLocalDecl binderName binderInfo domain fun fvar => do
+          let localId := proofPathId path context.size
+          let kind := if ← Meta.isProp domain then "assumption" else "variable"
+          let entry ← snapshotContextEntry localId binderName kind binderInfo domain
+          walkProofTerm builder (body.instantiate1 fvar) (context.push entry)
+            (bindings.push (fvar.fvarId!, localId, none)) (path.push 0) forcedKind?
   | .letE binderName type value body nondep =>
-      let localSteps ← walkProofTerm builder value context bindings (path.push 0) (some "localFact")
-      let localStep? := localSteps.back?
+      let localSteps ← walkProofTerm builder value context bindings (path.push 0)
+      -- Summarize the entire proof of a let-bound proposition in the scope where
+      -- the local theorem is introduced. Its implementation can contain lambdas
+      -- and internal lets whose narrower scopes must not leak into later uses.
+      let localStep? ← if ← Meta.isProp type then
+        addProofCandidate builder value type "localFact" context bindings (path.push 2)
+          localSteps none
+      else
+        pure none
       Meta.withLetDecl binderName type value (nondep := nondep) fun fvar => do
         let localId := proofPathId path context.size
         let kind := if ← Meta.isProp type then "localFact" else "definition"
@@ -534,7 +558,17 @@ def snapshotDeclaration (name : Name) (includeProofSteps : Bool := false) : Meta
   let axioms ← Lean.collectAxioms name
   let docString ← Lean.findDocString? env name
   let sourceRange := (← Lean.findDeclarationRanges? name).map (·.range)
-  let proofSteps ← if includeProofSteps then value?.mapM extractProofSteps else pure none
+  -- A declaration value is a proof term only when its declared type is a proposition.
+  -- In particular, definitions such as equivalences also have values, but walking those
+  -- values as proofs can produce a non-propositional candidate in the conclusion slot.
+  let proofSteps ←
+    if includeProofSteps then
+      if ← Meta.isProp info.type then
+        value?.mapM extractProofSteps
+      else
+        pure none
+    else
+      pure none
   return {
     name := toString name
     kind := declarationKind info

@@ -7,11 +7,19 @@ describe("GraphControls", () => {
   it("uses a single graph with an optional most-used emphasis", () => {
     render(<GraphControls state={initialState} dispatch={vi.fn()} />);
     expect(screen.getByRole("checkbox", { name: "Emphasize most used" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Show labels" })).toBeChecked();
     expect(screen.queryByRole("combobox", { name: "Graph mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "Visible nodes" })).not.toBeInTheDocument();
     expect(screen.queryByText("Proof steps")).not.toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Technical declarations" })).not.toBeInTheDocument();
+  });
+
+  it("toggles graph labels", () => {
+    const dispatch = vi.fn();
+    render(<GraphControls state={initialState} dispatch={dispatch} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show labels" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "patch", value: { showLabels: false } });
   });
 
   it("toggles most-used emphasis", () => {

@@ -10,6 +10,12 @@ require mathlib from git
 
 lean_lib Sieve
 
+lean_lib MathlibDemo where
+  srcDir := "examples/mathlib-demo"
+
+lean_lib SieveDemo where
+  srcDir := "demo"
+
 @[default_target]
 lean_exe sieve_extract where
   root := `Sieve.Extract
