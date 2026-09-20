@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::analysis::corpus::AnalysisCorpus;
 use crate::analysis::dependency::{DependencyConfig, DependencyPath};
 use crate::analysis::filters::{AnalysisFilter, DependencyLayer};
+use crate::analysis::proof_steps::{ProofOutlineEvidence, build_proof_outline};
 use crate::analysis::structure::StructuralMode;
 
 #[derive(Clone, Debug, Serialize)]
@@ -17,7 +18,22 @@ pub struct UiBootstrap {
     pub corpus_fingerprint: String,
     pub declaration_count: usize,
     pub theorem_count: usize,
+    pub proof_declarations: Vec<ProofDeclaration>,
     pub default_filters: UiFilters,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofDeclaration {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProofOutlineResponse {
+    pub declaration: String,
+    pub statement: String,
+    pub outline: ProofOutlineEvidence,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -181,13 +197,46 @@ impl UiIndex {
     pub fn bootstrap(&self, corpus: &AnalysisCorpus) -> UiBootstrap {
         let default = AnalysisFilter::default();
         let summary = corpus.summary(&default);
+        let mut proof_declarations = corpus
+            .declarations()
+            .iter()
+            .filter(|declaration| {
+                declaration.kind == "theorem"
+                    && !declaration.is_hidden_by_default()
+                    && declaration.proof_steps.is_some()
+            })
+            .map(|declaration| ProofDeclaration {
+                name: declaration.name.clone(),
+            })
+            .collect::<Vec<_>>();
+        proof_declarations.sort_by(|left, right| left.name.cmp(&right.name));
         UiBootstrap {
             schema_version: 2,
             corpus_fingerprint: self.fingerprint.clone(),
             declaration_count: summary.declaration_count,
             theorem_count: summary.theorem_count,
+            proof_declarations,
             default_filters: UiFilters::default(),
         }
+    }
+
+    pub fn proof_outline(
+        &self,
+        corpus: &AnalysisCorpus,
+        name: &str,
+    ) -> Result<ProofOutlineResponse> {
+        let declaration = corpus
+            .declaration(name)
+            .with_context(|| format!("unknown declaration {name}"))?;
+        let extraction = declaration
+            .proof_steps
+            .as_ref()
+            .with_context(|| format!("proof-step extraction is absent for {name}"))?;
+        Ok(ProofOutlineResponse {
+            declaration: declaration.name.clone(),
+            statement: declaration.r#type.clone(),
+            outline: build_proof_outline(extraction)?,
+        })
     }
 
     pub fn graph(&self, corpus: &AnalysisCorpus, request: &GraphRequest) -> Result<GraphResponse> {
@@ -638,7 +687,7 @@ mod tests {
     use super::*;
     use crate::model::{
         DeclarationSnapshot, ExprStats, ExpressionGraph, ExpressionNode, ExtractionSnapshot,
-        SymbolSnapshot,
+        ProofStep, ProofStepExtraction, SymbolSnapshot,
     };
 
     fn declaration(index: usize, generated: bool) -> DeclarationSnapshot {
@@ -742,6 +791,35 @@ mod tests {
         .unwrap()
     }
 
+    fn fixture_with_proof() -> AnalysisCorpus {
+        let mut snapshot = fixture(1).snapshot().clone();
+        let declaration = &mut snapshot.declarations[0];
+        declaration.has_value = true;
+        declaration.value_stats = Some(declaration.type_stats.clone());
+        declaration.value_graph = Some(declaration.type_graph.clone());
+        declaration.proof_dependencies = declaration.statement_dependencies.clone();
+        declaration.proof_steps = Some(ProofStepExtraction {
+            complete: true,
+            truncation_reason: None,
+            visited_terms: 1,
+            conclusion_step: Some(0),
+            steps: vec![ProofStep {
+                id: 0,
+                kind: "conclusion".into(),
+                proposition: declaration.r#type.clone(),
+                proposition_graph: declaration.type_graph.clone(),
+                context: vec![],
+                scope: vec![],
+                proof_term_path: vec![],
+                prerequisite_steps: vec![],
+                hypothesis_references: vec![],
+                named_references: vec![],
+            }],
+            named_results: vec![],
+        });
+        AnalysisCorpus::new(snapshot).unwrap()
+    }
+
     #[test]
     fn concise_statements_are_bounded() {
         assert_eq!(concise("  alpha   beta  ", 20), "alpha beta");
@@ -753,6 +831,20 @@ mod tests {
         let first = stable_position("a theorem");
         let second = stable_position("a theorem");
         assert_eq!((first.x, first.y), (second.x, second.y));
+    }
+
+    #[test]
+    fn bootstrap_lists_proofs_and_outline_uses_condensed_evidence() {
+        let corpus = fixture_with_proof();
+        let index = UiIndex::build(&corpus);
+        let bootstrap = index.bootstrap(&corpus);
+        assert_eq!(bootstrap.proof_declarations.len(), 1);
+        assert_eq!(bootstrap.proof_declarations[0].name, "Fixture.t000");
+
+        let response = index.proof_outline(&corpus, "Fixture.t000").unwrap();
+        assert_eq!(response.declaration, "Fixture.t000");
+        assert_eq!(response.outline.conclusion_step, Some(0));
+        assert_eq!(response.outline.retained_nodes.len(), 1);
     }
 
     #[test]

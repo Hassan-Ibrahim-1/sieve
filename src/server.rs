@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Query, Request, State};
+use axum::http::{HeaderValue, StatusCode, header::CACHE_CONTROL};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -204,6 +205,7 @@ async fn serve_async(state: AppState, port: u16) -> Result<()> {
         .route("/path", get(path_route))
         .route("/ui/bootstrap", get(ui_bootstrap))
         .route("/ui/graph", get(ui_graph))
+        .route("/ui/proof-outline", get(ui_proof_outline))
         .route("/ui/search", get(ui_search))
         .route("/ui/witnesses", get(ui_witnesses))
         .fallback(api_not_found);
@@ -219,13 +221,31 @@ async fn serve_async(state: AppState, port: u16) -> Result<()> {
     let app = app
         .with_state(state)
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(cache_headers));
     let address = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .with_context(|| format!("failed to bind the UI server to {address}"))?;
     println!("Sieve UI: http://{address}");
     axum::serve(listener, app).await.context("UI server failed")
+}
+
+async fn cache_headers(request: Request, next: Next) -> Response {
+    let value = cache_control_for_path(request.uri().path());
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static(value));
+    response
+}
+
+fn cache_control_for_path(path: &str) -> &'static str {
+    if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
 }
 
 async fn development_index() -> Html<&'static str> {
@@ -256,6 +276,17 @@ async fn ui_graph(
     state
         .ui
         .graph(&state.corpus, &request)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn ui_proof_outline(
+    State(state): State<AppState>,
+    Query(query): Query<NameQuery>,
+) -> ApiResult<crate::ui::ProofOutlineResponse> {
+    state
+        .ui
+        .proof_outline(&state.corpus, &query.name)
         .map(Json)
         .map_err(ApiError::bad_request)
 }
@@ -490,5 +521,15 @@ mod tests {
         assert_eq!(query.include_theorems, None);
         assert_eq!(query.include_definitions, None);
         assert_eq!(query.include_technical, None);
+    }
+
+    #[test]
+    fn html_is_revalidated_while_hashed_assets_are_immutable() {
+        assert_eq!(cache_control_for_path("/"), "no-cache");
+        assert_eq!(cache_control_for_path("/proof/view"), "no-cache");
+        assert_eq!(
+            cache_control_for_path("/assets/index-example.js"),
+            "public, max-age=31536000, immutable"
+        );
     }
 }

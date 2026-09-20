@@ -8,6 +8,7 @@ export const palette = {
   technical: "#83908b",
   edge: "#82918b",
   accent: "#20a978",
+  violet: "#7182ee",
 };
 
 export function nodeColor(node: GraphNode) {

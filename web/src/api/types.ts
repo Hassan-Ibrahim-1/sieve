@@ -8,7 +8,53 @@ export interface Bootstrap {
   corpusFingerprint: string;
   declarationCount: number;
   theoremCount: number;
+  proofDeclarations: ProofDeclaration[];
   defaultFilters: UiFilters;
+}
+
+export interface ProofDeclaration {
+  name: string;
+}
+
+export interface ProofContextEntry {
+  id: string;
+  userName: string;
+  kind: string;
+  binderInfo: string;
+  type: string;
+  value: string | null;
+}
+
+export interface ProofOutlineNode {
+  rawStepId: number;
+  kind: string;
+  proposition: string;
+  context: ProofContextEntry[];
+  hypothesisReferences: string[];
+  namedReferences: string[];
+}
+
+export interface ProofOutlineEdge {
+  source: number;
+  target: number;
+  rawStepPath: number[];
+}
+
+export interface ProofOutlineResponse {
+  declaration: string;
+  statement: string;
+  outline: {
+    algorithm: string;
+    retentionRules: string[];
+    complete: boolean;
+    truncationReason: string | null;
+    visitedTerms: number;
+    conclusionStep: number | null;
+    retainedNodes: ProofOutlineNode[];
+    condensedEdges: ProofOutlineEdge[];
+    rawSteps: unknown[];
+    rawEdges: Array<{ source: number; target: number }>;
+  };
 }
 
 export interface GraphPosition { x: number; y: number }

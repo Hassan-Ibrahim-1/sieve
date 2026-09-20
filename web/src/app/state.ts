@@ -1,6 +1,8 @@
 import type { UiFilters } from "../api/types";
 
 export interface UiState {
+  view: "sieve" | "proof";
+  proofDeclaration?: string;
   mostUsed: boolean;
   witnessLimit: number;
   filters: UiFilters;
@@ -15,6 +17,7 @@ export type Action =
   | { type: "reset" };
 
 export const initialState: UiState = {
+  view: "sieve",
   mostUsed: false,
   witnessLimit: 3,
   filters: { includeTheorems: true, includeDefinitions: true },
@@ -33,6 +36,8 @@ export function stateFromUrl(search: string): UiState {
   const params = new URLSearchParams(search);
   return {
     ...initialState,
+    view: params.get("view") === "proof" ? "proof" : "sieve",
+    proofDeclaration: params.get("proof") || undefined,
     mostUsed: booleanParam(params, "mostUsed", false),
     witnessLimit: boundedNumber(params.get("witnessLimit"), 1, 8, initialState.witnessLimit),
     selected: params.get("selected") || undefined,
@@ -58,6 +63,8 @@ function booleanParam(params: URLSearchParams, key: string, fallback: boolean) {
 
 export function writeStateToUrl(state: UiState) {
   const params = new URLSearchParams();
+  if (state.view === "proof") params.set("view", "proof");
+  if (state.proofDeclaration) params.set("proof", state.proofDeclaration);
   params.set("mostUsed", state.mostUsed ? "1" : "0");
   params.set("witnessLimit", String(state.witnessLimit));
   params.set("theorems", state.filters.includeTheorems ? "1" : "0");
